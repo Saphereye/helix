@@ -19,7 +19,6 @@ _runtime_hash() {
     | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
 }
 
-# Torch-style: {calver}-{date}-{hash} — calver from workspace Cargo.toml (25.7.1 -> 25.07.1).
 _calver() {
   cd "$startdir"
   local v major minor patch

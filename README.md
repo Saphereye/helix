@@ -25,7 +25,6 @@ For example below the line numbers are different but the program auto snaps base
 
 <img height="600" alt="image" src="https://github.com/user-attachments/assets/f03df18a-f77b-4505-a943-972968597397" />
 
-
 ### Auto file watching
 Reload buffers when the file changes on disk (with `auto-reload` as a boolean option in config). The logic is getting the file stamp every 250ms and if changes trigger a `:reload`.
 
@@ -36,3 +35,7 @@ https://github.com/user-attachments/assets/e5c83247-cf1d-4306-a4be-5c379490904f
 
 ### Faster dev builds
 Mostly for my personal dev setup. Skips redundant grammar fetches when sources already exist.
+
+## Features yoinked from others
+### Breadcrumbs
+Yoinked and add very small changes for compatibility: [feat: add breadcrumb navigation bar - #15573](https://github.com/helix-editor/helix/pull/15573). Enabled by default; set `[editor.breadcrumb] enable = false` to disable.

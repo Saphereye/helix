@@ -1,6 +1,7 @@
 ## Editor
 
 - [`[editor]` Section](#editor-section)
+- [`[editor.breadcrumb]` Section](#editorbreadcrumb-section)
 - [`[editor.clipboard-provider]` Section](#editorclipboard-provider-section)
 - [`[editor.statusline]` Section](#editorstatusline-section)
 - [`[editor.lsp]` Section](#editorlsp-section)
@@ -72,6 +73,39 @@
 | `kitty-keyboard-protocol` | Whether to enable Kitty Keyboard Protocol. Can be `enabled`, `disabled` or `auto` | `"auto"` |
 
 [^3]: In most cases, you also need to enable the `auto-format` setting under `languages.toml`. You can find the reasoning [here](https://github.com/helix-editor/helix/discussions/9043#discussioncomment-7811497).
+
+### `[editor.breadcrumb]` Section
+
+Allows configuration of the breadcrumb navigation bar.
+
+|       Setting        |                                   Description                                    | Default |
+|----------------------|----------------------------------------------------------------------------------|---------|
+| `enable`             | Whether to enable the breadcrumb navigation bar                                  | `true` |
+| `path`               | Selecting how much path information is shown                                     | `"full"`|
+| `max-depth`          | Maximum number of symbol levels shown; `0` means unlimited                       | `8`     |
+| `max-name-length`    | Maximum length of a single symbol name, truncated in the middle; `0` unlimited   | `32`    |
+
+```toml
+[editor.breadcrumb]
+enable = true
+# full: helix-term > src > commands > typed.rs > TypeableCommand > name
+# file: typed.rs > TypeableCommand > name
+# none: TypeableCommand > name
+path = "full|file|none"
+max-depth = 8
+max-name-length = 32
+```
+
+The bar is displayed at the top of the view.
+
+The symbol trail comes from the first language server that supports document
+symbols. When no such language server is available (or it only returns a flat
+symbol list), the trail is derived from tree-sitter tag queries (`tags.scm`)
+instead. When more symbols are nested than `max-depth`, the outermost symbols
+are elided with a leading `…`.
+
+If icon support is enabled via `[icons.kind]`, an icon is shown before each
+symbol name.
 
 ### `[editor.clipboard-provider]` Section
 
