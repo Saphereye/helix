@@ -1510,20 +1510,6 @@ impl Document {
                 })
         }
 
-        // update tree-sitter syntax tree
-        if let Some(syntax) = &mut self.syntax {
-            let loader = self.syn_loader.load();
-            if let Err(err) = syntax.update(
-                old_doc.slice(..),
-                self.text.slice(..),
-                transaction.changes(),
-                &loader,
-            ) {
-                log::error!("TS parser failed, disabling TS for the current buffer: {err}");
-                self.syntax = None;
-            }
-        }
-
         // TODO: all of that should likely just be hooks
         // start computing the diff in parallel
         if let Some(diff_handle) = &self.diff_handle {
