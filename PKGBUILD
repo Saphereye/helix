@@ -1,10 +1,10 @@
 pkgname=helix-fork
-pkgver=1.0.0
+pkgver=25.07.1.20260912.4862018f
 pkgrel=1
 pkgdesc="Personal Helix fork"
 arch=('x86_64')
 license=('MPL-2.0')
-makedepends=('cargo' 'librsvg')
+makedepends=('cargo' 'librsvg' 'git')
 provides=('hx')
 conflicts=('helix' 'helix-git')
 options=(!lto)
@@ -19,8 +19,31 @@ _runtime_hash() {
     | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
 }
 
+# Torch-style: {calver}-{date}-{hash} — calver from workspace Cargo.toml (25.7.1 -> 25.07.1).
+_calver() {
+  cd "$startdir"
+  local v major minor patch
+  v=$(grep -m1 '^version' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+  IFS=. read -r major minor patch <<< "$v"
+  printf '%s.%02d.%s\n' "$major" "$minor" "$patch"
+}
+
+_fork_version_display() {
+  cd "$startdir"
+  local ver date hash
+  ver=$(_calver)
+  date=$(git log -1 --format=%cs | tr -d '-')
+  hash=$(git rev-parse --short=8 HEAD)
+  printf '%s-%s-%s\n' "$ver" "$date" "$hash"
+}
+
+pkgver() {
+  _fork_version_display | tr '-' '.'
+}
+
 build() {
   cd "$startdir"
+  export HELIX_PKGVER="$(_fork_version_display)"
   export CARGO_TARGET_DIR="$startdir/target"
   export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=native"
   cargo build --locked --profile opt -p helix-term

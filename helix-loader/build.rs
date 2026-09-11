@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::path::Path;
 use std::process::Command;
 
@@ -7,72 +6,71 @@ const MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
 const PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
 fn main() {
-    let git_hash = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
+    let version = std::env::var("HELIX_PKGVER")
         .ok()
-        .filter(|output| output.status.success())
-        .and_then(|x| String::from_utf8(x.stdout).ok())
-        .or_else(|| option_env!("HELIX_NIX_BUILD_REV").map(|s| s.to_string()));
-
-    let minor = if MINOR.len() == 1 {
-        // Print single-digit months in '0M' format
-        format!("0{MINOR}")
-    } else {
-        MINOR.to_string()
-    };
-    let calver = if PATCH == "0" {
-        format!("{MAJOR}.{minor}")
-    } else {
-        format!("{MAJOR}.{minor}.{PATCH}")
-    };
-    let version: Cow<_> = match &git_hash {
-        Some(git_hash) => format!("{} ({})", calver, &git_hash[..8]).into(),
-        None => calver.into(),
-    };
+        .filter(|s| !s.is_empty())
+        .or_else(fork_version_from_git)
+        .unwrap_or_else(fallback_version);
 
     println!(
         "cargo:rustc-env=BUILD_TARGET={}",
         std::env::var("TARGET").unwrap()
     );
+    println!("cargo:rustc-env=VERSION_AND_GIT_HASH={version}");
 
-    println!("cargo:rustc-env=VERSION_AND_GIT_HASH={}", version);
+    register_git_rerun_if_changed();
+}
 
-    if git_hash.is_none() {
-        return;
-    }
+/// Torch-style: `25.07.1-20260906-d47f0771` — calver, commit date, short hash.
+fn fork_version_from_git() -> Option<String> {
+    let ver = calver();
+    let date = git_output(&["log", "-1", "--format=%cs", "HEAD"])?.replace('-', "");
+    let hash = git_output(&["rev-parse", "--short=8", "HEAD"])?;
+    Some(format!("{ver}-{date}-{hash}"))
+}
 
-    // we need to revparse because the git dir could be anywhere if you are
-    // using detached worktrees but there is no good way to obtain an OsString
-    // from command output so for now we can't accept non-utf8 paths here
-    // probably rare enough where it doesn't matter tough we could use gitoxide
-    // here but that would be make it a hard dependency and slow compile times
-    let Some(git_dir): Option<String> = Command::new("git")
-        .args(["rev-parse", "--git-dir"])
+fn calver() -> String {
+    let minor: u32 = MINOR.parse().unwrap_or(0);
+    format!("{MAJOR}.{minor:02}.{PATCH}")
+}
+
+fn fallback_version() -> String {
+    calver()
+}
+
+fn git_output(args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(args)
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .and_then(|x| String::from_utf8(x.stdout).ok())
-        .map(|x| x.trim().to_string())
-    else {
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn register_git_rerun_if_changed() {
+    let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
+    if cargo_toml.exists() {
+        println!("cargo:rerun-if-changed={}", cargo_toml.display());
+    }
+
+    if git_output(&["rev-parse", "HEAD"]).is_none()
+        && option_env!("HELIX_NIX_BUILD_REV").is_none()
+    {
+        return;
+    }
+
+    let Some(git_dir) = git_output(&["rev-parse", "--git-dir"]) else {
         return;
     };
-    // If heads starts pointing at something else (different branch)
-    // we need to return
+
     let head = Path::new(&git_dir).join("HEAD");
     if head.exists() {
         println!("cargo:rerun-if-changed={}", head.display());
     }
-    // if the thing head points to (branch) itself changes
-    // we need to return
-    let Some(head_ref): Option<String> = Command::new("git")
-        .args(["symbolic-ref", "HEAD"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|x| String::from_utf8(x.stdout).ok())
-        .map(|x| x.trim().to_string())
-    else {
+
+    let Some(head_ref) = git_output(&["symbolic-ref", "HEAD"]) else {
         return;
     };
     let head_ref = Path::new(&git_dir).join(head_ref);
