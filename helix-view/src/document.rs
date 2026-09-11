@@ -207,6 +207,8 @@ pub struct Document {
     pub(crate) language_servers: HashMap<LanguageServerName, Arc<Client>>,
 
     diff_handle: Option<DiffHandle>,
+    diff_group: Option<DocumentId>,
+    diff_compare: Option<DocumentId>,
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
 
     // when document was used for most-recent-used buffer picker
@@ -758,6 +760,8 @@ impl Document {
             modified_since_accessed: false,
             language_servers: HashMap::new(),
             diff_handle: None,
+            diff_group: None,
+            diff_compare: None,
             config,
             version_control_head: None,
             focused_at: std::time::Instant::now(),
@@ -2001,6 +2005,30 @@ impl Document {
         self.diff_handle.as_ref()
     }
 
+    pub fn diff_group(&self) -> Option<DocumentId> {
+        self.diff_group
+    }
+
+    pub fn set_diff_group(&mut self, anchor: Option<DocumentId>) {
+        self.diff_group = anchor;
+    }
+
+    pub fn diff_compare(&self) -> Option<DocumentId> {
+        self.diff_compare
+    }
+
+    pub fn set_diff_compare(&mut self, compare: Option<DocumentId>) {
+        self.diff_compare = compare;
+    }
+
+    pub fn in_diff_group(&self) -> bool {
+        self.diff_group.is_some()
+    }
+
+    pub fn clear_diff(&mut self) {
+        self.diff_handle = None;
+    }
+
     /// Intialize/updates the differ for this document with a new base.
     pub fn set_diff_base(&mut self, diff_base: Vec<u8>) {
         if let Ok((diff_base, ..)) = from_reader(&mut diff_base.as_slice(), Some(self.encoding)) {
@@ -2011,6 +2039,14 @@ impl Document {
             self.diff_handle = Some(DiffHandle::new(diff_base, self.text.clone()))
         } else {
             self.diff_handle = None;
+        }
+    }
+
+    pub fn set_diff_base_rope(&mut self, diff_base: Rope) {
+        if let Some(differ) = &self.diff_handle {
+            differ.update_diff_base(diff_base);
+        } else {
+            self.diff_handle = Some(DiffHandle::new(diff_base, self.text.clone()));
         }
     }
 
