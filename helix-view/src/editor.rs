@@ -337,6 +337,9 @@ pub struct Config {
     /// Time delay defaults to false with 3000ms delay. Focus lost defaults to false.
     #[serde(deserialize_with = "deserialize_auto_save")]
     pub auto_save: AutoSave,
+    /// Reload buffers when their file changes on disk. Defaults to true.
+    #[serde(default = "default_auto_reload")]
+    pub auto_reload: bool,
     /// Set a global text_width
     pub text_width: usize,
     /// Time in milliseconds since last keypress before idle timers trigger.
@@ -1045,6 +1048,10 @@ fn default_auto_save_delay() -> u64 {
     DEFAULT_AUTO_SAVE_DELAY
 }
 
+const fn default_auto_reload() -> bool {
+    true
+}
+
 fn deserialize_auto_save<'de, D>(deserializer: D) -> Result<AutoSave, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1196,6 +1203,7 @@ impl Default for Config {
             auto_format: true,
             default_yank_register: '"',
             auto_save: AutoSave::default(),
+            auto_reload: true,
             idle_timeout: Duration::from_millis(250),
             completion_timeout: Duration::from_millis(250),
             preview_completion_insert: true,

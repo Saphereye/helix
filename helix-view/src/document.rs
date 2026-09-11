@@ -1269,6 +1269,19 @@ impl Document {
         };
     }
 
+    /// Modification time of the file on disk, if the document has a path.
+    pub fn disk_mtime(&self) -> Option<SystemTime> {
+        let path = self.path()?;
+        let metadata = path.metadata().ok()?;
+        metadata.modified().ok()
+    }
+
+    /// Whether the file on disk is newer than when this buffer was last loaded or saved.
+    pub fn changed_on_disk(&self) -> bool {
+        self.disk_mtime()
+            .is_some_and(|mtime| mtime > self.last_saved_time)
+    }
+
     // Detect if the file is readonly and change the readonly field if necessary (unix only)
     pub fn detect_readonly(&mut self) {
         // Allows setting the flag for files the user cannot modify, like root files

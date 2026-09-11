@@ -27,6 +27,7 @@ mod signature_help;
 mod snippet;
 mod syntax;
 mod diffbufs;
+mod file_watcher;
 mod workspace_trust;
 
 pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
@@ -41,6 +42,8 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
     let word_index = word_index::Handler::spawn();
     syntax::spawn();
     diffbufs::register_hooks();
+    file_watcher::spawn();
+    file_watcher::register_hooks();
     let pull_diagnostics = PullDiagnosticsHandler::default().spawn();
     let pull_all_documents_diagnostics = PullAllDocumentsDiagnosticHandler::default().spawn();
 
