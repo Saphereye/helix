@@ -229,11 +229,6 @@ pub struct Document {
     pub code_action_controllers: HashMap<ViewId, TaskController>,
     pub pull_diagnostic_controller: TaskController,
     pub document_link_controller: TaskController,
-
-    // NOTE: this field should eventually go away - we should use the Editor's syn_loader instead
-    // of storing a copy on every doc. Then we can remove the surrounding `Arc` and use the
-    // `ArcSwap` directly.
-    syn_loader: Arc<ArcSwap<syntax::Loader>>,
     syntax_text_snapshot: Rope,
     syntax_pending: ChangeSet,
 }
@@ -725,7 +720,6 @@ impl Document {
         text: Rope,
         encoding_with_bom_info: Option<(&'static Encoding, bool)>,
         config: Arc<dyn DynAccess<Config>>,
-        syn_loader: Arc<ArcSwap<syntax::Loader>>,
     ) -> Self {
         let (encoding, has_bom) = encoding_with_bom_info.unwrap_or((encoding::UTF_8, false));
         let line_ending = config.load().default_line_ending.into();
@@ -776,7 +770,6 @@ impl Document {
             color_swatch_controller: TaskController::new(),
             document_highlight_controllers: HashMap::new(),
             code_action_controllers: HashMap::new(),
-            syn_loader,
             syntax_text_snapshot,
             syntax_pending,
             previous_diagnostic_ids: HashMap::new(),
@@ -785,13 +778,10 @@ impl Document {
         }
     }
 
-    pub fn default(
-        config: Arc<dyn DynAccess<Config>>,
-        syn_loader: Arc<ArcSwap<syntax::Loader>>,
-    ) -> Self {
+    pub fn default(config: Arc<dyn DynAccess<Config>>) -> Self {
         let line_ending: LineEnding = config.load().default_line_ending.into();
         let text = Rope::from(line_ending.as_str());
-        Self::from(text, None, config, syn_loader)
+        Self::from(text, None, config)
     }
 
     // TODO: async fn?
@@ -829,7 +819,7 @@ impl Document {
         };
 
         let loader = syn_loader.load();
-        let mut doc = Self::from(rope, Some((encoding, has_bom)), config, syn_loader);
+        let mut doc = Self::from(rope, Some((encoding, has_bom)), config);
 
         // set the path and try detecting the language
         doc.set_path(Some(path));
@@ -2565,7 +2555,6 @@ mod test {
             text,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
-            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
         );
         let view = ViewId::default();
         doc.set_selection(view, Selection::single(0, 0));
@@ -2604,7 +2593,6 @@ mod test {
             text,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
-            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
         );
         let view = ViewId::default();
         doc.set_selection(view, Selection::single(5, 5));
@@ -2718,10 +2706,7 @@ mod test {
     #[test]
     fn test_line_ending() {
         assert_eq!(
-            Document::default(
-                Arc::new(ArcSwap::new(Arc::new(Config::default()))),
-                Arc::new(ArcSwap::from_pointee(syntax::Loader::default()))
-            )
+            Document::default(Arc::new(ArcSwap::new(Arc::new(Config::default()))))
             .text()
             .to_string(),
             helix_core::NATIVE_LINE_ENDING.as_str()
