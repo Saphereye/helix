@@ -1,9 +1,16 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 
 use anyhow::bail;
-use helix_core::Rope;
+use helix_core::{char_idx_at_visual_offset, visual_offset_from_anchor, Rope, RopeSlice};
 use helix_loader::workspace_trust::TrustQuery;
-use helix_view::{DocumentId, Editor};
+use helix_vcs::DiffHandle;
+use helix_view::view::ViewPosition;
+use helix_view::{Document, DocumentId, Editor, View, ViewId};
+
+thread_local! {
+    static SYNCING_SCROLL: Cell<bool> = const { Cell::new(false) };
+}
 
 pub fn group_members(editor: &Editor, anchor: DocumentId) -> Vec<DocumentId> {
     editor
@@ -144,5 +151,272 @@ fn link_buffers(
         bail!("need at least 2 {label} to diff");
     }
     link_diff_group(editor, doc_ids);
+    sync_diff_scroll(editor, editor.tree.focus);
     Ok(())
+}
+
+/// Keep diff-linked panes aligned by mapping the cursor line through diff hunks.
+pub fn sync_diff_scroll(editor: &mut Editor, source_view_id: ViewId) {
+    if SYNCING_SCROLL.get() {
+        return;
+    }
+
+    let source_doc_id = editor.tree.get(source_view_id).doc;
+    let Some(anchor) = editor
+        .document(source_doc_id)
+        .and_then(|doc| doc.diff_group())
+    else {
+        return;
+    };
+
+    let (source_line, col_in_line, viewport_row, horizontal_offset) = {
+        let Some(doc) = editor.document(source_doc_id) else {
+            return;
+        };
+        let view = editor.tree.get(source_view_id);
+        let text = doc.text().slice(..);
+        let cursor = doc.selection(source_view_id).primary().cursor(text);
+        let line = text.char_to_line(cursor);
+        let line_start = text.line_to_char(line);
+        let offset = doc.view_offset(source_view_id);
+        (
+            line as u32,
+            cursor.saturating_sub(line_start),
+            cursor_viewport_row(view, doc, text, cursor),
+            offset.horizontal_offset,
+        )
+    };
+
+    let anchor_line = map_line_to_anchor(editor, anchor, source_doc_id, source_line);
+
+    let targets: Vec<(ViewId, DocumentId)> = editor
+        .tree
+        .views()
+        .filter(|(view, _)| view.id != source_view_id)
+        .map(|(view, _)| (view.id, view.doc))
+        .collect();
+
+    let mut updates = Vec::new();
+    for (view_id, doc_id) in targets {
+        let in_group = editor
+            .document(doc_id)
+            .and_then(|doc| doc.diff_group())
+            == Some(anchor);
+        if !in_group {
+            continue;
+        }
+        let target_line = map_line_from_anchor(editor, anchor, doc_id, anchor_line);
+        let Some(doc) = editor.document(doc_id) else {
+            continue;
+        };
+        let view = editor.tree.get(view_id);
+        let target_char = char_at_line_col(doc.text().slice(..), target_line, col_in_line);
+        updates.push((
+            view_id,
+            doc_id,
+            view_position_for_char_at_row(
+                view,
+                doc,
+                target_char,
+                viewport_row,
+                horizontal_offset,
+            ),
+        ));
+    }
+
+    SYNCING_SCROLL.set(true);
+    for (view_id, doc_id, position) in updates {
+        if let Some(doc) = editor.document_mut(doc_id) {
+            doc.set_view_offset(view_id, position);
+        }
+    }
+    SYNCING_SCROLL.set(false);
+}
+
+/// Visual row of `cursor` within the view viewport (0 = top line on screen).
+fn cursor_viewport_row(view: &View, doc: &Document, text: RopeSlice<'_>, cursor: usize) -> usize {
+    if let Some(pos) = view.screen_coords_at_pos(doc, text, cursor) {
+        return pos.row;
+    }
+
+    let view_offset = doc.view_offset(view.id);
+    let viewport = view.inner_area(doc);
+    let text_fmt = doc.text_format(viewport.width, None);
+    let annotations = view.text_annotations(doc, None);
+    visual_offset_from_anchor(
+        text,
+        view_offset.anchor,
+        cursor,
+        &text_fmt,
+        &annotations,
+        view_offset.vertical_offset + viewport.height as usize,
+    )
+    .ok()
+    .map(|(pos, _)| pos.row.saturating_sub(view_offset.vertical_offset))
+    .unwrap_or(0)
+}
+
+fn char_at_line_col(text: RopeSlice<'_>, line: u32, col_in_line: usize) -> usize {
+    if text.len_lines() == 0 {
+        return 0;
+    }
+    let line = (line as usize).min(text.len_lines().saturating_sub(1));
+    let line_start = text.line_to_char(line);
+    let line_end = text.line_to_char(line + 1).min(text.len_chars());
+    let line_len = line_end.saturating_sub(line_start);
+    line_start + col_in_line.min(line_len.saturating_sub(1).max(0))
+}
+
+fn view_position_for_char_at_row(
+    view: &View,
+    doc: &Document,
+    char_idx: usize,
+    viewport_row: usize,
+    horizontal_offset: usize,
+) -> ViewPosition {
+    let text = doc.text().slice(..);
+    if text.len_chars() == 0 {
+        return ViewPosition {
+            anchor: 0,
+            vertical_offset: 0,
+            horizontal_offset: 0,
+        };
+    }
+    let char_idx = char_idx.min(text.len_chars().saturating_sub(1));
+    let viewport = view.inner_area(doc);
+    let text_fmt = doc.text_format(viewport.width, None);
+    let annotations = view.text_annotations(doc, None);
+    let (anchor, vertical_offset) = char_idx_at_visual_offset(
+        text,
+        char_idx,
+        -(viewport_row as isize),
+        0,
+        &text_fmt,
+        &annotations,
+    );
+    ViewPosition {
+        anchor,
+        vertical_offset,
+        horizontal_offset,
+    }
+}
+
+fn map_line_to_anchor(
+    editor: &Editor,
+    anchor: DocumentId,
+    doc_id: DocumentId,
+    line: u32,
+) -> u32 {
+    if doc_id == anchor {
+        return line;
+    }
+    let Some(handle) = editor
+        .document(doc_id)
+        .and_then(|doc| doc.diff_handle().cloned())
+    else {
+        return line;
+    };
+    map_doc_line_to_base(&handle, line)
+}
+
+fn map_line_from_anchor(
+    editor: &Editor,
+    anchor: DocumentId,
+    doc_id: DocumentId,
+    line: u32,
+) -> u32 {
+    if doc_id == anchor {
+        return line;
+    }
+    let Some(handle) = editor
+        .document(doc_id)
+        .and_then(|doc| doc.diff_handle().cloned())
+    else {
+        return line;
+    };
+    map_base_line_to_doc(&handle, line)
+}
+
+fn map_doc_line_to_base(handle: &DiffHandle, doc_line: u32) -> u32 {
+    let diff = handle.load();
+    if diff.is_empty() {
+        return doc_line;
+    }
+
+    for i in 0..diff.len() {
+        let hunk = diff.nth_hunk(i);
+        if doc_line < hunk.after.start {
+            let (before_end, after_end) = previous_hunk_ends(handle, i);
+            return before_end + doc_line.saturating_sub(after_end);
+        }
+        if doc_line < hunk.after.end {
+            return map_line_within_hunk_to_base(&hunk, doc_line);
+        }
+    }
+
+    let last = diff.nth_hunk(diff.len() - 1);
+    last.before.end + doc_line.saturating_sub(last.after.end)
+}
+
+fn map_base_line_to_doc(handle: &DiffHandle, base_line: u32) -> u32 {
+    let diff = handle.load();
+    if diff.is_empty() {
+        return base_line;
+    }
+
+    for i in 0..diff.len() {
+        let hunk = diff.nth_hunk(i);
+        if base_line < hunk.before.start {
+            let (before_end, after_end) = previous_hunk_ends(handle, i);
+            return after_end + base_line.saturating_sub(before_end);
+        }
+        if base_line < hunk.before.end {
+            return map_line_within_hunk_to_doc(&hunk, base_line);
+        }
+    }
+
+    let last = diff.nth_hunk(diff.len() - 1);
+    last.after.end + base_line.saturating_sub(last.before.end)
+}
+
+fn previous_hunk_ends(handle: &DiffHandle, index: u32) -> (u32, u32) {
+    if index == 0 {
+        (0, 0)
+    } else {
+        let diff = handle.load();
+        let prev = diff.nth_hunk(index - 1);
+        (prev.before.end, prev.after.end)
+    }
+}
+
+fn map_line_within_hunk_to_base(hunk: &helix_vcs::Hunk, doc_line: u32) -> u32 {
+    if hunk.is_pure_insertion() {
+        return hunk.before.start;
+    }
+    if hunk.is_pure_removal() {
+        return hunk.before.start;
+    }
+    let offset = doc_line.saturating_sub(hunk.after.start);
+    let paired = (hunk.before.end - hunk.before.start).min(hunk.after.end - hunk.after.start);
+    if offset < paired {
+        hunk.before.start + offset
+    } else {
+        hunk.before.end.saturating_sub(1)
+    }
+}
+
+fn map_line_within_hunk_to_doc(hunk: &helix_vcs::Hunk, base_line: u32) -> u32 {
+    if hunk.is_pure_removal() {
+        return hunk.after.start;
+    }
+    if hunk.is_pure_insertion() {
+        return hunk.after.start;
+    }
+    let offset = base_line.saturating_sub(hunk.before.start);
+    let paired = (hunk.before.end - hunk.before.start).min(hunk.after.end - hunk.after.start);
+    if offset < paired {
+        hunk.after.start + offset
+    } else {
+        hunk.after.end.saturating_sub(1)
+    }
 }

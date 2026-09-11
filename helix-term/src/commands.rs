@@ -1932,6 +1932,10 @@ fn switch_to_lowercase(cx: &mut Context) {
 pub fn scroll(cx: &mut Context, offset: usize, direction: Direction, sync_cursor: bool) {
     use Direction::*;
     let config = cx.editor.config();
+    let view_id = view!(cx.editor).id;
+    let sync_diff = doc!(cx.editor).in_diff_group();
+
+    {
     let (view, doc) = current!(cx.editor);
     let mut view_offset = doc.view_offset(view.id);
 
@@ -1986,57 +1990,59 @@ pub fn scroll(cx: &mut Context, offset: usize, direction: Direction, sync_cursor
         });
         drop(annotations);
         doc.set_selection(view.id, selection);
-        return;
-    }
-
-    let view_offset = doc.view_offset(view.id);
-
-    let mut head;
-    match direction {
-        Forward => {
-            let off;
-            (head, off) = char_idx_at_visual_offset(
-                doc_text,
-                view_offset.anchor,
-                (view_offset.vertical_offset + scrolloff) as isize,
-                0,
-                &text_fmt,
-                &annotations,
-            );
-            head += (off != 0) as usize;
-            if head <= cursor {
-                return;
-            }
-        }
-        Backward => {
-            head = char_idx_at_visual_offset(
-                doc_text,
-                view_offset.anchor,
-                (view_offset.vertical_offset + height - scrolloff - 1) as isize,
-                0,
-                &text_fmt,
-                &annotations,
-            )
-            .0;
-            if head >= cursor {
-                return;
-            }
-        }
-    }
-
-    let anchor = if cx.editor.mode == Mode::Select {
-        range.anchor
     } else {
-        head
-    };
+        let view_offset = doc.view_offset(view.id);
 
-    // replace primary selection with an empty selection at cursor pos
-    let prim_sel = Range::new(anchor, head);
-    let mut sel = doc.selection(view.id).clone();
-    let idx = sel.primary_index();
-    sel = sel.replace(idx, prim_sel);
-    drop(annotations);
-    doc.set_selection(view.id, sel);
+        let mut head;
+        let skip_selection = match direction {
+            Forward => {
+                let off;
+                (head, off) = char_idx_at_visual_offset(
+                    doc_text,
+                    view_offset.anchor,
+                    (view_offset.vertical_offset + scrolloff) as isize,
+                    0,
+                    &text_fmt,
+                    &annotations,
+                );
+                head += (off != 0) as usize;
+                head <= cursor
+            }
+            Backward => {
+                head = char_idx_at_visual_offset(
+                    doc_text,
+                    view_offset.anchor,
+                    (view_offset.vertical_offset + height - scrolloff - 1) as isize,
+                    0,
+                    &text_fmt,
+                    &annotations,
+                )
+                .0;
+                head >= cursor
+            }
+        };
+
+        if !skip_selection {
+            let anchor = if cx.editor.mode == Mode::Select {
+                range.anchor
+            } else {
+                head
+            };
+
+            // replace primary selection with an empty selection at cursor pos
+            let prim_sel = Range::new(anchor, head);
+            let mut sel = doc.selection(view.id).clone();
+            let idx = sel.primary_index();
+            sel = sel.replace(idx, prim_sel);
+            drop(annotations);
+            doc.set_selection(view.id, sel);
+        }
+    }
+    }
+
+    if sync_diff {
+        diffbufs::sync_diff_scroll(cx.editor, view_id);
+    }
 }
 
 fn page_up(cx: &mut Context) {

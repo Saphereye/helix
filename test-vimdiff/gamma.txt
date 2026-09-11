@@ -1,0 +1,160 @@
+# Project notes — gamma (third pane)
+
+The quick brown fox jumps over the sleepy dog.
+Helix is a post-modern text editor.
+
+## Tasks
+- Fix input lag on large files
+- Add vimdiff support
+- Write documentation
+
+```rust
+fn main() {
+    println!("Hello, world!");
+    let count = 42;
+}
+```
+
+---
+
+## Chapter 1: Introduction
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam,
+quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore
+eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident,
+sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+Line 001 — unchanged context for scroll sync testing.
+Line 002 — unchanged context for scroll sync testing.
+Line 003 — unchanged context for scroll sync testing.
+Line 004 — unchanged context for scroll sync testing.
+Line 005 — unchanged context for scroll sync testing.
+
+## Chapter 2: Architecture
+
+The editor core lives in helix-core. Document state is managed by helix-view.
+The terminal UI is helix-term. Tree-sitter provides syntax highlighting.
+
+Buffer diff links documents through diff_group and diff_compare fields.
+Inline highlights use word-level Myers diff on changed lines only.
+
+Line 010 — gamma says: prefer debounced parsing for large files.
+Line 011 — gamma says: file watcher polls mtime every 250ms.
+Line 012 — gamma says: scroll sync maps lines through diff hunks.
+Line 013 — gamma says: anchor buffer is the first opened file.
+Line 014 — gamma says: third pane diffs against anchor not compare.
+
+## Chapter 3: Configuration
+
+[editor]
+auto-reload = true
+auto-save = false
+scrolloff = 5
+scroll-lines = 3
+
+Line 020 — unchanged padding line.
+Line 021 — unchanged padding line.
+Line 022 — unchanged padding line.
+Line 023 — unchanged padding line.
+Line 024 — unchanged padding line.
+
+## Chapter 4: Commands
+
+:diffbufs          — diff all visible buffers
+:diffbufs-off       — exit diff mode
+:reset-diff-change  — revert hunk under cursor
+:reload             — reload from disk
+
+Line 030 — gamma version string: v25.7.1-gamma
+Line 031 — build profile: debug
+Line 032 — target: helix-term
+Line 033 — feature: diffbufs
+Line 034 — feature: file-watcher
+
+## Chapter 5: Testing scroll sync
+
+Scroll down in the left pane and watch the right pane follow.
+Page down with Ctrl-d. Page up with Ctrl-u.
+Use j/k to move the cursor near the edge and trigger scroll.
+
+Line 040 — marker forty in gamma.
+Line 041 — marker forty-one in gamma.
+Line 042 — marker forty-two in gamma.
+Line 043 — marker forty-three in gamma.
+Line 044 — marker forty-four in gamma.
+
+## Chapter 6: More filler
+
+Pellentesque habitant morbi tristique senectus et netus et malesuada fames
+ac turpis egestas. Vestibulum tortor quam, feugiat vitae, ultricies eget,
+tempor sit amet, ante. Donec eu libero sit amet quam egestas semper.
+
+Line 050 — fifty
+Line 051 — fifty-one
+Line 052 — fifty-two
+Line 053 — fifty-three
+Line 054 — fifty-four
+Line 055 — fifty-five
+Line 056 — fifty-six
+Line 057 — fifty-seven
+Line 058 — fifty-eight
+Line 059 — fifty-nine
+
+## Chapter 7: Deep section
+
+Aenean ultricies mi vitae est. Mauris placerat eleifend leo. Quisque sit amet
+est et sapien dignissim bibendum. Nam nec tellus a odio tincidunt auctor a
+non mauris. Morbi accumsan ipsum velit.
+
+Line 060 — sixty
+Line 061 — sixty-one
+Line 062 — sixty-two
+Line 063 — sixty-three
+Line 064 — sixty-four
+Line 065 — sixty-five
+Line 066 — sixty-six
+Line 067 — sixty-seven
+Line 068 — sixty-eight
+Line 069 — sixty-nine
+
+## Chapter 8: Near the end
+
+Line 070 — seventy
+Line 071 — seventy-one
+Line 072 — seventy-two
+Line 073 — seventy-three
+Line 074 — seventy-four
+Line 075 — seventy-five
+Line 076 — seventy-six
+Line 077 — seventy-seven
+Line 078 — seventy-eight
+Line 079 — seventy-nine
+
+## Chapter 9: Final stretch
+
+Line 080 — eighty
+Line 081 — eighty-one
+Line 082 — eighty-two
+Line 083 — eighty-three
+Line 084 — eighty-four
+Line 085 — eighty-five
+Line 086 — eighty-six
+Line 087 — eighty-seven
+Line 088 — eighty-eight
+Line 089 — eighty-nine
+
+Line 090 — ninety
+Line 091 — ninety-one
+Line 092 — ninety-two
+Line 093 — ninety-three
+Line 094 — ninety-four
+Line 095 — ninety-five
+Line 096 — ninety-six
+Line 097 — ninety-seven
+Line 098 — ninety-eight
+Line 099 — ninety-nine
+
+EOF — gamma end of file
