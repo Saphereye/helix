@@ -26,6 +26,7 @@ mod prompt;
 mod signature_help;
 mod snippet;
 mod syntax;
+mod diffbufs;
 mod workspace_trust;
 
 pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
@@ -39,6 +40,7 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
     let document_links = DocumentLinksHandler::default().spawn();
     let word_index = word_index::Handler::spawn();
     syntax::spawn();
+    diffbufs::register_hooks();
     let pull_diagnostics = PullDiagnosticsHandler::default().spawn();
     let pull_all_documents_diagnostics = PullAllDocumentsDiagnosticHandler::default().spawn();
 
