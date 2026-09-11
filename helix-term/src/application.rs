@@ -158,6 +158,7 @@ impl Application {
             // If there are any more files specified, open them
             if files_it.peek().is_some() {
                 let mut nr_of_files = 0;
+                let mut opened_doc_ids = Vec::new();
                 for (file, pos) in files_it {
                     nr_of_files += 1;
                     if file.is_dir() {
@@ -171,6 +172,7 @@ impl Application {
                         // option. If neither of those two arguments are passed
                         // in, just load the files normally.
                         let action = match args.split {
+                            _ if args.diff => Action::VerticalSplit,
                             _ if nr_of_files == 1 => Action::VerticalSplit,
                             Some(Layout::Vertical) => Action::VerticalSplit,
                             Some(Layout::Horizontal) => Action::HorizontalSplit,
@@ -184,13 +186,20 @@ impl Application {
                                 continue;
                             }
                             Err(err) => return Err(anyhow::anyhow!(err)),
-                            // We can't open more than 1 buffer for 1 file, in this case we already have opened this file previously
+                            // Buffer already open: still split for --diff so every file gets a pane.
                             Ok(doc_id) if old_id == Some(doc_id) => {
-                                nr_of_files -= 1;
+                                if args.diff {
+                                    editor.switch(doc_id, Action::VerticalSplit);
+                                } else {
+                                    nr_of_files -= 1;
+                                }
                                 doc_id
                             }
                             Ok(doc_id) => doc_id,
                         };
+                        if !opened_doc_ids.contains(&doc_id) {
+                            opened_doc_ids.push(doc_id);
+                        }
                         // with Action::Load all documents have the same view
                         // NOTE: this isn't necessarily true anymore. If
                         // `--vsplit` or `--hsplit` are used, the file which is
@@ -211,11 +220,19 @@ impl Application {
                 if nr_of_files == 0 {
                     editor.new_file(Action::VerticalSplit);
                 } else {
-                    editor.set_status(format!(
-                        "Loaded {} file{}.",
-                        nr_of_files,
-                        if nr_of_files == 1 { "" } else { "s" } // avoid "Loaded 1 files." grammo
-                    ));
+                    if args.diff {
+                        if let Err(err) =
+                            crate::commands::diffbufs::link_opened_buffers(&mut editor, &opened_doc_ids)
+                        {
+                            editor.set_error(format!("{err}"));
+                        }
+                    } else {
+                        editor.set_status(format!(
+                            "Loaded {} file{}.",
+                            nr_of_files,
+                            if nr_of_files == 1 { "" } else { "s" } // avoid "Loaded 1 files." grammo
+                        ));
+                    }
                     // align the view to center after all files are loaded,
                     // does not affect views without pos since it is at the top
                     let (view, doc) = current!(editor);

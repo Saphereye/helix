@@ -60,6 +60,7 @@ FLAGS:
     -V, --version                  Print version information
     --vsplit                       Split all given files vertically into different windows
     --hsplit                       Split all given files horizontally into different windows
+    --diff                         Open files in vertical splits and diff them; the first file is the reference
     -w, --working-dir <path>       Specify an initial working directory
     +[N]                           Open the first given file at line number N, or the last line, if
                                    N is not specified.
