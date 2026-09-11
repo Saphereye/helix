@@ -1,4 +1,8 @@
 target
+.pkg-cache
+pkg
+src
+*.pkg.tar.zst
 .direnv
 helix-term/rustfmt.toml
 result
