@@ -1,6 +1,10 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant as StdInstant},
+};
 
-use helix_core::{diff::compare_ropes, Rope};
+use helix_core::diff::compare_ropes;
 use helix_event::{register_hook, send_blocking, AsyncHook};
 use helix_view::{
     events::{DocumentDidChange, DocumentDidClose},
@@ -10,84 +14,122 @@ use tokio::{sync::mpsc, time::Instant};
 
 use crate::job;
 
-// TODO should be configurable?
-const SYNTAX_DEBOUNCE: Duration = Duration::from_millis(150);
+const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(50);
+const MIN_DEBOUNCE: Duration = Duration::from_millis(15);
+const MAX_DEBOUNCE: Duration = Duration::from_millis(300);
+const DEBOUNCE_PAD: Duration = Duration::from_millis(20);
 
 #[derive(Default)]
 struct SyntaxHandler {
-    pending: HashMap<DocumentId, Pending>,
-}
-
-struct Pending {
-    old_text: Rope,
-    text: Rope,
+    pending: HashSet<DocumentId>,
+    last_parse: Arc<Mutex<HashMap<DocumentId, Duration>>>,
 }
 
 enum SyntaxEvent {
-    Change {
-        doc: DocumentId,
-        old_text: Rope,
-        text: Rope,
-    },
+    Change(DocumentId),
     Close(DocumentId),
+}
+
+impl SyntaxHandler {
+    fn debounce_for(&self, doc: DocumentId) -> Duration {
+        let last = self
+            .last_parse
+            .lock()
+            .ok()
+            .and_then(|times| times.get(&doc).copied());
+        parse_debounce(last)
+    }
+}
+
+fn parse_debounce(last_parse: Option<Duration>) -> Duration {
+    let Some(parse) = last_parse else {
+        return DEFAULT_DEBOUNCE;
+    };
+    parse
+        .saturating_add(DEBOUNCE_PAD)
+        .clamp(MIN_DEBOUNCE, MAX_DEBOUNCE)
 }
 
 impl AsyncHook for SyntaxHandler {
     type Event = SyntaxEvent;
 
-    fn handle_event(&mut self, event: Self::Event, timeout: Option<Instant>) -> Option<Instant> {
+    fn handle_event(&mut self, event: Self::Event, _timeout: Option<Instant>) -> Option<Instant> {
         match event {
-            SyntaxEvent::Change {
-                doc,
-                old_text,
-                text,
-            } => {
-                match self.pending.get_mut(&doc) {
-                    Some(pending) => pending.text = text,
-                    None => {
-                        self.pending.insert(doc, Pending { old_text, text });
-                    }
-                }
-                Some(Instant::now() + SYNTAX_DEBOUNCE)
+            SyntaxEvent::Change(doc) => {
+                self.pending.insert(doc);
+                Some(Instant::now() + self.debounce_for(doc))
             }
             SyntaxEvent::Close(doc) => {
                 self.pending.remove(&doc);
-                timeout
+                if let Ok(mut times) = self.last_parse.lock() {
+                    times.remove(&doc);
+                }
+                None
             }
         }
     }
 
     fn finish_debounce(&mut self) {
         let pending = std::mem::take(&mut self.pending);
-        job::dispatch_blocking(move |editor, _| update_syntax(editor, pending));
+        let last_parse = Arc::clone(&self.last_parse);
+        job::dispatch_blocking(move |editor, _| update_syntax(editor, pending, last_parse));
     }
 }
 
-fn update_syntax(editor: &mut Editor, pending: HashMap<DocumentId, Pending>) {
+fn update_syntax(
+    editor: &mut Editor,
+    pending: HashSet<DocumentId>,
+    last_parse: Arc<Mutex<HashMap<DocumentId, Duration>>>,
+) {
     let loader = editor.syn_loader.load();
-    for (doc_id, update) in pending {
+    for doc_id in pending {
         let Some(doc) = editor.document_mut(doc_id) else {
             continue;
         };
-        let Some(syntax) = doc.syntax.as_mut() else {
+        let diff = if doc.syntax_highlight_stale() {
+            doc.syntax_pending_changes().clone()
+        } else {
+            compare_ropes(doc.syntax_text_snapshot(), doc.text())
+                .changes()
+                .clone()
+        };
+        let Some(mut syntax) = doc.syntax.take() else {
             continue;
         };
-        let diff = compare_ropes(&update.old_text, &update.text);
-        if let Err(err) = syntax.update(
-            update.old_text.slice(..),
-            update.text.slice(..),
-            diff.changes(),
+        let start = StdInstant::now();
+        let update_result = syntax.update(
+            doc.syntax_text_snapshot().slice(..),
+            doc.text().slice(..),
+            &diff,
             &loader,
-        ) {
-            log::error!("tree-sitter parser failed, disabling syntax highlighting: {err}");
-            doc.syntax = None;
+        );
+        if let Err(err) = update_result {
+            log::error!(
+                target: "helix::syntax",
+                "parse failed for {}: {err}",
+                doc.display_name()
+            );
+        } else {
+            doc.syntax = Some(syntax);
+            let elapsed = start.elapsed();
+            doc.commit_syntax_text_snapshot();
+            if let Ok(mut times) = last_parse.lock() {
+                times.insert(doc_id, elapsed);
+            }
+            log::debug!(
+                target: "helix::syntax",
+                "debounced parse ok for {} in {elapsed:?}, next debounce {:?}",
+                doc.display_name(),
+                parse_debounce(Some(elapsed))
+            );
         }
     }
     helix_event::request_redraw();
 }
 
 pub fn spawn() {
-    let tx = SyntaxHandler::default().spawn();
+    let handler = SyntaxHandler::default();
+    let tx = handler.spawn();
     register_hooks(&tx);
 }
 
@@ -97,14 +139,7 @@ fn register_hooks(tx: &mpsc::Sender<SyntaxEvent>) {
         if event.ghost_transaction || event.doc.syntax().is_none() {
             return Ok(());
         }
-        send_blocking(
-            &change_tx,
-            SyntaxEvent::Change {
-                doc: event.doc.id(),
-                old_text: event.old_text.clone(),
-                text: event.doc.text().clone(),
-            },
-        );
+        send_blocking(&change_tx, SyntaxEvent::Change(event.doc.id()));
         Ok(())
     });
 

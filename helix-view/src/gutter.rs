@@ -373,6 +373,7 @@ mod tests {
             rope,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
         );
 
         assert_eq!(view.gutters.layout.len(), 5);
@@ -398,6 +399,7 @@ mod tests {
             rope,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
         );
 
         assert_eq!(view.gutters.layout.len(), 1);
@@ -416,6 +418,7 @@ mod tests {
             rope,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
         );
 
         assert_eq!(view.gutters.layout.len(), 2);
@@ -438,6 +441,7 @@ mod tests {
             rope,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
         );
 
         let rope = Rope::from_str("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np");
@@ -445,6 +449,7 @@ mod tests {
             rope,
             None,
             Arc::new(ArcSwap::new(Arc::new(Config::default()))),
+            Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
         );
 
         assert_eq!(view.gutters.layout.len(), 2);
