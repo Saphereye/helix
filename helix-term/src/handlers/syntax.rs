@@ -4,7 +4,6 @@ use std::{
     time::{Duration, Instant as StdInstant},
 };
 
-use helix_core::diff::compare_ropes;
 use helix_event::{register_hook, send_blocking, AsyncHook};
 use helix_view::{
     events::{DocumentDidChange, DocumentDidClose},
@@ -86,13 +85,7 @@ fn update_syntax(
         let Some(doc) = editor.document_mut(doc_id) else {
             continue;
         };
-        let diff = if doc.syntax_highlight_stale() {
-            doc.syntax_pending_changes().clone()
-        } else {
-            compare_ropes(doc.syntax_text_snapshot(), doc.text())
-                .changes()
-                .clone()
-        };
+        let diff = doc.syntax_pending_changes().clone();
         let Some(mut syntax) = doc.syntax.take() else {
             continue;
         };

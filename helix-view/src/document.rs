@@ -776,12 +776,12 @@ impl Document {
             color_swatch_controller: TaskController::new(),
             document_highlight_controllers: HashMap::new(),
             code_action_controllers: HashMap::new(),
-            previous_diagnostic_ids: HashMap::new(),
-            pull_diagnostic_controller: TaskController::new(),
-            document_link_controller: TaskController::new(),
             syn_loader,
             syntax_text_snapshot,
             syntax_pending,
+            previous_diagnostic_ids: HashMap::new(),
+            pull_diagnostic_controller: TaskController::new(),
+            document_link_controller: TaskController::new(),
         }
     }
 
@@ -2720,7 +2720,7 @@ mod test {
         assert_eq!(
             Document::default(
                 Arc::new(ArcSwap::new(Arc::new(Config::default()))),
-                Arc::new(ArcSwap::from_pointee(syntax::Loader::default())),
+                Arc::new(ArcSwap::from_pointee(syntax::Loader::default()))
             )
             .text()
             .to_string(),

@@ -48,7 +48,6 @@ pub fn render_document(
     );
     render_text(
         &mut renderer,
-        doc,
         doc.text().slice(..),
         offset.anchor,
         &doc.text_format(viewport.width, Some(theme)),
@@ -63,7 +62,6 @@ pub fn render_document(
 #[allow(clippy::too_many_arguments)]
 pub fn render_text(
     renderer: &mut TextRenderer,
-    doc: &Document,
     text: RopeSlice<'_>,
     anchor: usize,
     text_fmt: &TextFormat,
@@ -79,25 +77,8 @@ pub fn render_text(
 
     let mut formatter =
         DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, text_annotations, anchor);
-    let stale = doc.syntax_highlight_stale().then(|| StaleHighlightMapper {
-        inverse: doc
-            .syntax_pending_changes()
-            .invert(doc.syntax_text_snapshot()),
-        snapshot: doc.syntax_text_snapshot().slice(..),
-        live: text,
-    });
-    let highlight_text = if stale.is_some() {
-        doc.syntax_text_snapshot().slice(..)
-    } else {
-        text
-    };
-    let mut syntax_highlighter = SyntaxHighlighter::new(
-        syntax_highlighter,
-        highlight_text,
-        theme,
-        renderer.text_style,
-        stale,
-    );
+    let mut syntax_highlighter =
+        SyntaxHighlighter::new(syntax_highlighter, theme, renderer.text_style, renderer.doc);
     let mut overlay_highlighter = OverlayHighlighter::new(overlay_highlights, theme);
 
     let mut last_line_pos = LinePos {
@@ -196,6 +177,7 @@ pub fn render_text(
 
 #[derive(Debug)]
 pub struct TextRenderer<'a> {
+    doc: &'a Document,
     surface: &'a mut Surface,
     pub text_style: Style,
     pub whitespace_style: Style,
@@ -222,7 +204,7 @@ pub struct GraphemeStyle {
 impl<'a> TextRenderer<'a> {
     pub fn new(
         surface: &'a mut Surface,
-        doc: &Document,
+        doc: &'a Document,
         theme: &Theme,
         offset: Position,
         viewport: Rect,
@@ -269,6 +251,7 @@ impl<'a> TextRenderer<'a> {
         let indent_width = doc.indent_style.indent_width(tab_width) as u16;
 
         TextRenderer {
+            doc,
             surface,
             indent_guide_char: editor_config.indent_guides.character.into(),
             newline,
@@ -501,25 +484,25 @@ impl<'a> TextRenderer<'a> {
     }
 }
 
-struct SyntaxHighlighter<'h, 'r, 't> {
+struct SyntaxHighlighter<'h, 'd, 't> {
     inner: Option<Highlighter<'h>>,
-    text: RopeSlice<'r>,
+    text: RopeSlice<'d>,
     /// The character index of the next highlight event, or `usize::MAX` if the highlighter is
     /// finished.
     pos: usize,
     theme: &'t Theme,
     text_style: Style,
     style: Style,
-    stale: Option<StaleHighlightMapper<'r>>,
+    stale: Option<StaleHighlightMapper<'d>>,
 }
 
-struct StaleHighlightMapper<'r> {
+struct StaleHighlightMapper<'d> {
     inverse: ChangeSet,
-    snapshot: RopeSlice<'r>,
-    live: RopeSlice<'r>,
+    snapshot: RopeSlice<'d>,
+    live: RopeSlice<'d>,
 }
 
-impl<'r> StaleHighlightMapper<'r> {
+impl<'d> StaleHighlightMapper<'d> {
     fn snapshot_char(&self, live_char: usize) -> Option<usize> {
         if live_char >= self.live.len_chars() {
             return None;
@@ -539,17 +522,26 @@ impl<'r> StaleHighlightMapper<'r> {
     }
 }
 
-impl<'h, 'r, 't> SyntaxHighlighter<'h, 'r, 't> {
+impl<'h, 'd, 't> SyntaxHighlighter<'h, 'd, 't> {
     fn new(
         inner: Option<Highlighter<'h>>,
-        text: RopeSlice<'r>,
         theme: &'t Theme,
         text_style: Style,
-        stale: Option<StaleHighlightMapper<'r>>,
+        doc: &'d Document,
     ) -> Self {
+        let live = doc.text().slice(..);
+        let snapshot = doc.syntax_text_snapshot().slice(..);
+        let stale = doc.syntax_highlight_stale().then(|| StaleHighlightMapper {
+            inverse: doc
+                .syntax_pending_changes()
+                .invert(doc.syntax_text_snapshot()),
+            snapshot,
+            live,
+        });
+        let highlight_text = if stale.is_some() { snapshot } else { live };
         let mut highlighter = Self {
             inner,
-            text,
+            text: highlight_text,
             pos: 0,
             theme,
             style: text_style,
