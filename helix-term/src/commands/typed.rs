@@ -2685,6 +2685,61 @@ fn run_shell_command(
     Ok(())
 }
 
+fn diffbufs(
+    cx: &mut compositor::Context,
+    args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    use helix_view::editor::Action;
+
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    match args.len() {
+        0 => crate::commands::diffbufs::link_visible_buffers(cx.editor)?,
+        1 => {
+            let doc_a = doc!(cx.editor).id();
+            let (path, _) = crate::args::parse_file(&args[0]);
+            let path = helix_stdx::path::expand_tilde(path);
+            cx.editor.open(&path, Action::VerticalSplit)?;
+            let doc_b = doc!(cx.editor).id();
+            crate::commands::diffbufs::link_diff_group(cx.editor, &[doc_a, doc_b]);
+        }
+        _ => {
+            let (path1, _) = crate::args::parse_file(&args[0]);
+            let (path2, _) = crate::args::parse_file(&args[1]);
+            let path1 = helix_stdx::path::expand_tilde(path1);
+            let path2 = helix_stdx::path::expand_tilde(path2);
+            cx.editor.open(&path1, Action::Replace)?;
+            let doc_a = doc!(cx.editor).id();
+            cx.editor.open(&path2, Action::VerticalSplit)?;
+            let doc_b = doc!(cx.editor).id();
+            crate::commands::diffbufs::link_diff_group(cx.editor, &[doc_a, doc_b]);
+        }
+    }
+
+    Ok(())
+}
+
+fn diffbufs_off(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let doc_id = doc!(cx.editor).id();
+    if !cx.editor.document(doc_id).is_some_and(|doc| doc.in_diff_group()) {
+        bail!("not in a buffer diff session");
+    }
+    crate::commands::diffbufs::unlink_diff_group(cx.editor, doc_id);
+
+    Ok(())
+}
+
 fn reset_diff_change(
     cx: &mut compositor::Context,
     _args: Args,
@@ -3973,6 +4028,28 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         fun: run_shell_command,
         completer: SHELL_COMPLETER,
         signature: SHELL_SIGNATURE,
+    },
+    TypableCommand {
+        name: "diffbufs",
+        aliases: &[],
+        doc: "Diff visible buffers as a group, or diff against file(s).",
+        fun: diffbufs,
+        completer: CommandCompleter::all(completers::filename),
+        signature: Signature {
+            positionals: (0, Some(2)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "diffbufs-off",
+        aliases: &["diffoff"],
+        doc: "Stop buffer diff for the current buffer and restore git diff if available.",
+        fun: diffbufs_off,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
+            ..Signature::DEFAULT
+        },
     },
     TypableCommand {
         name: "reset-diff-change",

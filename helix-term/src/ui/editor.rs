@@ -146,6 +146,15 @@ impl EditorView {
 
         Self::doc_diagnostics_highlights_into(doc, theme, &mut overlays);
 
+        if let Some(overlay) = super::diff_highlights::inline_diff_highlights(
+            doc,
+            theme,
+            view_offset.anchor,
+            inner.height,
+        ) {
+            overlays.push(overlay);
+        }
+
         if is_focused {
             if config.lsp.auto_document_highlight {
                 if let Some(overlay) = Self::doc_document_highlights(doc, view, theme) {

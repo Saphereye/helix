@@ -15,6 +15,7 @@ pub struct Args {
     pub build_grammars: bool,
     pub strict: bool,
     pub split: Option<Layout>,
+    pub diff: bool,
     pub verbosity: u64,
     pub log_file: Option<PathBuf>,
     pub config_file: Option<PathBuf>,
@@ -58,6 +59,7 @@ impl Args {
                     Some(_) => anyhow::bail!("can only set a split once of a specific type"),
                     None => args.split = Some(Layout::Horizontal),
                 },
+                "--diff" => args.diff = true,
                 "--health" => {
                     args.health = true;
                     args.health_arg = argv.next_if(|opt| !opt.starts_with('-'));

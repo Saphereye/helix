@@ -136,6 +136,68 @@ impl<'a> imara_diff::TokenSource for RopeLines<'a> {
     }
 }
 
+struct WordTokens<'a>(&'a [&'a str]);
+
+impl<'a> imara_diff::TokenSource for WordTokens<'a> {
+    type Token = &'a str;
+    type Tokenizer = std::iter::Copied<std::slice::Iter<'a, &'a str>>;
+
+    fn tokenize(&self) -> Self::Tokenizer {
+        self.0.iter().copied()
+    }
+
+    fn estimate_tokens(&self) -> u32 {
+        self.0.len() as u32
+    }
+}
+
+fn words_in_line(line: &str) -> Vec<(Range<usize>, &str)> {
+    let mut words = Vec::new();
+    let mut byte_start = 0;
+    while byte_start < line.len() {
+        if line.as_bytes()[byte_start].is_ascii_whitespace() {
+            byte_start += 1;
+            continue;
+        }
+        let end_byte = line[byte_start..]
+            .find(|c: char| c.is_whitespace())
+            .map(|i| byte_start + i)
+            .unwrap_or(line.len());
+        let char_start = line[..byte_start].chars().count();
+        let char_end = char_start + line[byte_start..end_byte].chars().count();
+        words.push((char_start..char_end, &line[byte_start..end_byte]));
+        byte_start = end_byte;
+    }
+    words
+}
+
+/// Returns char ranges within `doc` for words that differ from `base`.
+pub fn word_diff_changed_ranges(base: &str, doc: &str) -> Vec<Range<usize>> {
+    let base_words = words_in_line(base);
+    let doc_words = words_in_line(doc);
+    if doc_words.is_empty() {
+        return Vec::new();
+    }
+    if base_words.is_empty() {
+        return doc_words.into_iter().map(|(range, _)| range).collect();
+    }
+
+    let base_tokens: Vec<&str> = base_words.iter().map(|(_, word)| *word).collect();
+    let doc_tokens: Vec<&str> = doc_words.iter().map(|(_, word)| *word).collect();
+    let input = InternedInput::new(WordTokens(&base_tokens), WordTokens(&doc_tokens));
+    let diff = Diff::compute(Algorithm::Myers, &input);
+
+    let mut changed = Vec::new();
+    for hunk in diff.hunks() {
+        for i in hunk.after.start..hunk.after.end {
+            if let Some((range, _)) = doc_words.get(i as usize) {
+                changed.push(range.clone());
+            }
+        }
+    }
+    changed
+}
+
 /// Compares `old` and `new` to generate a [`Transaction`] describing
 /// the steps required to get from `old` to `new`.
 pub fn compare_ropes(before: &Rope, after: &Rope) -> Transaction {
@@ -186,6 +248,20 @@ mod tests {
             compare_ropes(&old, &new).apply(&mut old);
             old == new
         }
+    }
+
+    #[test]
+    fn word_diff_highlights_changed_words() {
+        let base = "The quick brown fox jumps over the lazy dog.";
+        let doc = "The quick brown fox leaps over the lazy dog.";
+        let changed = word_diff_changed_ranges(base, doc);
+        assert_eq!(changed.len(), 1);
+        let word: String = doc
+            .chars()
+            .skip(changed[0].start)
+            .take(changed[0].end - changed[0].start)
+            .collect();
+        assert_eq!(word, "leaps");
     }
 
     #[test]
