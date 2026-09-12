@@ -1,6 +1,6 @@
 use std::fs;
 
-use helix_term::{application::Application, config::Config};
+use helix_term::application::Application;
 use helix_view::{doc, editor::BreadcrumbPathOptions};
 
 use super::*;
@@ -19,8 +19,7 @@ fn outer() {
 ",
     )?;
 
-    let mut config = Config::default();
-    config.editor.lsp.enable = false;
+    let mut config = helpers::test_config();
     config.editor.breadcrumb.enable = true;
     config.editor.breadcrumb.path = BreadcrumbPathOptions::None;
 

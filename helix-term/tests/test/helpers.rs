@@ -317,6 +317,9 @@ pub fn test_editor_config() -> helix_view::editor::Config {
             enable: false,
             ..Default::default()
         },
+        // The file watcher polls every 250ms and keeps the integration event
+        // loop from ever going idle when a buffer has a path on disk.
+        auto_reload: false,
         // Trust everything implicitly so tests don't hit popups.
         workspace_trust: WorkspaceTrustConfig {
             level: ImplicitTrustLevelConfig::Insecure,
