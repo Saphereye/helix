@@ -148,21 +148,24 @@ pub fn line_numbers<'doc>(
     theme: &Theme,
     is_focused: bool,
 ) -> GutterFn<'doc> {
-    let text = doc.text().slice(..);
     let width = line_numbers_width(view, doc);
 
     let last_line_in_view = view.estimate_last_doc_line(doc);
 
     // Whether to draw the line number for the last line of the
     // document or not.  We only draw it if it's not an empty line.
-    let draw_last = text.line_to_byte(last_line_in_view) < text.len_bytes();
+    let draw_last = if doc.is_hex_dump() {
+        true
+    } else {
+        let text = doc.text().slice(..);
+        text.line_to_byte(last_line_in_view) < text.len_bytes()
+    };
 
     let linenr = theme.get("ui.linenr");
     let linenr_select = theme.get("ui.linenr.selected");
 
-    let current_line = doc
-        .text()
-        .char_to_line(doc.selection(view.id).primary().cursor(text));
+    let current_line =
+        doc.display_char_to_line(doc.display_cursor(doc.selection(view.id).primary()));
 
     let line_number = editor.config().line_number;
     let mode = editor.mode;
@@ -210,10 +213,14 @@ pub fn line_numbers<'doc>(
 /// whether there is content on the last line (the `~` line), and the
 /// `editor.gutters.line-numbers.min-width` settings.
 fn line_numbers_width(view: &View, doc: &Document) -> usize {
-    let text = doc.text();
-    let last_line = text.len_lines().saturating_sub(1);
-    let draw_last = text.line_to_byte(last_line) < text.len_bytes();
-    let last_drawn = if draw_last { last_line + 1 } else { last_line };
+    let last_drawn = if doc.is_hex_dump() {
+        doc.display_len_lines()
+    } else {
+        let text = doc.text();
+        let last_line = text.len_lines().saturating_sub(1);
+        let draw_last = text.line_to_byte(last_line) < text.len_bytes();
+        if draw_last { last_line + 1 } else { last_line }
+    };
     let digits = count_digits(last_drawn);
     let n_min = view.gutters.line_numbers.min_width;
     digits.max(n_min)
@@ -335,11 +342,9 @@ pub fn code_action_hint<'doc>(
     is_focused: bool,
 ) -> GutterFn<'doc> {
     let style = theme.get("ui.text");
-    let text = doc.text().slice(..);
     let show_hint = doc.code_action_hints(view.id);
-    let current_line = doc
-        .text()
-        .char_to_line(doc.selection(view.id).primary().cursor(text));
+    let current_line =
+        doc.display_char_to_line(doc.display_cursor(doc.selection(view.id).primary()));
 
     Box::new(
         move |line: usize, _selected: bool, first_visual_line: bool, out: &mut String| {

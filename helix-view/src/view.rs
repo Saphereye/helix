@@ -251,6 +251,9 @@ impl View {
         doc: &Document,
         scrolloff: usize,
     ) -> Option<ViewPosition> {
+        if doc.is_hex_dump() {
+            return crate::hex_dump::scroll_to_cursor(doc, self, scrolloff, CENTERING);
+        }
         let view_offset = doc.get_view_offset(self.id)?;
         let doc_text = doc.text().slice(..);
         let viewport = self.inner_area(doc);
@@ -375,11 +378,11 @@ impl View {
     /// or virtual text lines are visible
     #[inline]
     pub fn estimate_last_doc_line(&self, doc: &Document) -> usize {
-        let doc_text = doc.text().slice(..);
-        let line = doc_text.char_to_line(doc.view_offset(self.id).anchor.min(doc_text.len_chars()));
+        let anchor = doc.view_offset(self.id).anchor;
+        let line = doc.display_char_to_line(anchor);
         // Saturating subs to make it inclusive zero indexing.
         (line + self.inner_height())
-            .min(doc_text.len_lines())
+            .min(doc.display_len_lines())
             .saturating_sub(1)
     }
 
@@ -426,6 +429,19 @@ impl View {
         text: RopeSlice,
         pos: usize,
     ) -> Option<Position> {
+        if doc.is_hex_dump() {
+            let byte_len = doc.hex_bytes().map_or(0, |b| b.len());
+            let max_char = crate::hex_dump::display_len_chars(byte_len).saturating_sub(1);
+            let viewport = self.inner_area(doc);
+            return crate::hex_dump::cursor_screen_pos(
+                byte_len,
+                doc.view_offset(self.id),
+                pos.min(max_char),
+                viewport.height as usize,
+                viewport.width as usize,
+            );
+        }
+
         let view_offset = doc.view_offset(self.id);
 
         let viewport = self.inner_area(doc);
@@ -515,10 +531,7 @@ impl View {
             .show_cursorline_diagnostics(doc, self.id);
         let config = config.inline_diagnostics.prepare(width, enable_cursor_line);
         if !config.disabled() {
-            let cursor = doc
-                .selection(self.id)
-                .primary()
-                .cursor(doc.text().slice(..));
+            let cursor = doc.display_cursor(doc.selection(self.id).primary());
             text_annotations.add_line_annotation(InlineDiagnostics::new(
                 doc,
                 cursor,

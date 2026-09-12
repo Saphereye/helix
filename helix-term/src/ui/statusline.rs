@@ -356,6 +356,15 @@ where
 }
 
 fn get_position(context: &RenderContext) -> Position {
+    if context.doc.is_hex_dump() {
+        let cursor =
+            context
+                .doc
+                .display_cursor(context.doc.selection(context.view.id).primary());
+        let byte_len = context.doc.hex_bytes().map_or(0, |b| b.len());
+        let (row, col) = helix_view::hex_dump::char_to_line_col(cursor, byte_len);
+        return Position::new(row, col);
+    }
     coords_at_pos(
         context.doc.text().slice(..),
         context
@@ -381,7 +390,7 @@ fn render_total_line_numbers<'a, F>(context: &mut RenderContext<'a>, write: F)
 where
     F: Fn(&mut RenderContext<'a>, Span<'a>) + Copy,
 {
-    let total_line_numbers = context.doc.text().len_lines();
+    let total_line_numbers = context.doc.display_len_lines();
 
     write(context, format!(" {} ", total_line_numbers).into());
 }

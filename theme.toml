@@ -56,6 +56,12 @@ tabstop = { modifiers = ["italic"], bg = "bossanova" }
 "ui.text" = { fg = "lavender" }
 "ui.text.focus" = { fg = "white" }
 "ui.text.inactive" = "sirocco"
+"ui.text.hex.offset" = { fg = "comet" }
+"ui.text.hex.null" = { fg = "comet" }
+"ui.text.hex.ascii.printable" = { fg = "mint" }
+"ui.text.hex.ascii.whitespace" = { fg = "chamois" }
+"ui.text.hex.ascii.other" = { fg = "chamois" }
+"ui.text.hex.nonascii" = { fg = "honey" }
 "ui.text.directory" = { fg = "lilac" }
 "ui.virtual" = { fg = "comet" }
 "ui.virtual.ruler" = { bg = "bossanova" }

@@ -4,7 +4,7 @@ pub(crate) mod syntax;
 pub(crate) mod typed;
 pub(crate) mod diffbufs;
 pub(crate) mod hex_edit;
-pub(crate) mod xxd;
+pub(crate) mod hexviewer;
 
 pub use dap::*;
 use futures_util::FutureExt;
@@ -51,6 +51,7 @@ use helix_view::{
     document::{FormatterError, Mode, SCRATCH_BUFFER_NAME},
     editor::{Action, Motion},
     expansion,
+    hex_dump,
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
@@ -731,6 +732,18 @@ type MoveFn =
 fn move_impl(cx: &mut Context, move_fn: MoveFn, dir: Direction, behaviour: Movement) {
     let count = cx.count();
     let (view, doc) = current!(cx.editor);
+
+    if doc.is_hex_dump() {
+        let byte_len = doc.hex_bytes().map_or(0, |b| b.len());
+        let vertical = move_fn as usize == move_vertically as usize
+            || move_fn as usize == move_vertically_visual as usize;
+        let selection = doc.selection(view.id).clone().transform(|range| {
+            hex_dump::move_range(range, dir, count, behaviour, byte_len, vertical)
+        });
+        doc.set_selection(view.id, selection);
+        return;
+    }
+
     let text = doc.text().slice(..);
     let text_fmt = doc.text_format(view.inner_area(doc).width, None);
     let mut annotations = view.text_annotations(doc, None);
@@ -1954,6 +1967,27 @@ pub fn scroll(cx: &mut Context, offset: usize, direction: Direction, sync_cursor
 
     {
     let (view, doc) = current!(cx.editor);
+
+    if doc.is_hex_dump() {
+        let byte_len = doc.hex_bytes().map_or(0, |b| b.len());
+        let line_delta = match direction {
+            Forward => offset as isize,
+            Backward => -(offset as isize),
+        };
+        let mut view_offset = doc.view_offset(view.id);
+        view_offset = hex_dump::scroll_view(view_offset, byte_len, line_delta);
+        doc.set_view_offset(view.id, view_offset);
+
+        if sync_cursor {
+            let extend = cx.editor.mode == Mode::Select;
+            let mut sel = doc.selection(view.id).clone();
+            let idx = sel.primary_index();
+            let range = sel.primary();
+            let new_range = hex_dump::move_cursor_lines(range, byte_len, line_delta, extend);
+            sel = sel.replace(idx, new_range);
+            doc.set_selection(view.id, sel);
+        }
+    } else {
     let mut view_offset = doc.view_offset(view.id);
 
     let range = doc.selection(view.id).primary();
@@ -2054,6 +2088,7 @@ pub fn scroll(cx: &mut Context, offset: usize, direction: Direction, sync_cursor
             drop(annotations);
             doc.set_selection(view.id, sel);
         }
+    }
     }
     }
 
@@ -2828,6 +2863,9 @@ fn extend_line(cx: &mut Context) {
 }
 
 fn extend_line_below(cx: &mut Context) {
+    if hex_edit::delete_byte_normal(cx) {
+        return;
+    }
     extend_line_impl(cx, Extend::Below);
 }
 
@@ -3005,6 +3043,9 @@ enum YankAction {
 }
 
 fn delete_selection_impl(cx: &mut Context, op: Operation, yank: YankAction) {
+    if hex_edit::block_plaintext_edit(cx) {
+        return;
+    }
     let (view, doc) = current!(cx.editor);
 
     let selection = doc.selection(view.id);
@@ -3049,6 +3090,9 @@ fn delete_by_selection_insert_mode(
     mut f: impl FnMut(RopeSlice, &Range) -> Deletion,
     direction: Direction,
 ) {
+    if hex_edit::block_plaintext_edit(cx) {
+        return;
+    }
     let (view, doc) = current!(cx.editor);
     let text = doc.text().slice(..);
     let mut selection = SmallVec::new();
@@ -4712,6 +4756,9 @@ pub mod insert {
     }
 
     pub fn delete_char_backward(cx: &mut Context) {
+        if hex_edit::delete_byte_backward(cx) {
+            return;
+        }
         let count = cx.count();
         let (view, doc) = current_ref!(cx.editor);
         let text = doc.text().slice(..);
@@ -4755,6 +4802,9 @@ pub mod insert {
     }
 
     pub fn delete_char_forward(cx: &mut Context) {
+        if hex_edit::delete_byte_forward(cx) {
+            return;
+        }
         let count = cx.count();
         delete_by_selection_insert_mode(
             cx,
@@ -5150,6 +5200,10 @@ pub(crate) fn paste(editor: &mut Editor, register: char, pos: Paste, count: usiz
     let values: Vec<_> = values.map(|value| value.to_string()).collect();
 
     let (view, doc) = current!(editor);
+    if doc.is_hex_dump() {
+        editor.set_status(hex_edit::HEX_EDIT_ONLY_MSG);
+        return;
+    }
     paste_impl(&values, doc, view, pos, count, editor.mode);
 }
 

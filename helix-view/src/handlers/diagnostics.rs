@@ -96,10 +96,7 @@ impl DiagnosticsHandler {
 impl DiagnosticsHandler {
     pub fn immediately_show_diagnostic(&self, doc: &Document, view: ViewId) {
         self.last_doc.set(doc.id());
-        let cursor_line = doc
-            .selection(view)
-            .primary()
-            .cursor_line(doc.text().slice(..));
+        let cursor_line = doc.display_cursor_line(doc.selection(view).primary());
         self.last_cursor_line.set(cursor_line);
         self.active_generation
             .store(self.generation.get(), atomic::Ordering::Relaxed);
@@ -108,10 +105,7 @@ impl DiagnosticsHandler {
         if !self.active {
             return false;
         }
-        let cursor_line = doc
-            .selection(view)
-            .primary()
-            .cursor_line(doc.text().slice(..));
+        let cursor_line = doc.display_cursor_line(doc.selection(view).primary());
         if self.last_cursor_line.get() == cursor_line && self.last_doc.get() == doc.id() {
             let active_generation = self.active_generation.load(atomic::Ordering::Relaxed);
             self.generation.get() == active_generation

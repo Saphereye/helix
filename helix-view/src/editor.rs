@@ -1,6 +1,7 @@
 use crate::{
     annotations::diagnostics::{DiagnosticFilter, InlineDiagnosticsConfig},
     clipboard::ClipboardProvider,
+    hex_dump,
     document::{
         DocumentOpenError, DocumentSavedEventFuture, DocumentSavedEventResult, Mode, SavePoint,
     },
@@ -2690,9 +2691,22 @@ impl CursorCache {
             return pos;
         }
 
-        let text = doc.text().slice(..);
-        let cursor = doc.selection(view.id).primary().cursor(text);
-        let res = view.screen_coords_at_pos(doc, text, cursor);
+        let res = if doc.is_hex_dump() {
+            let byte_len = doc.hex_bytes().map_or(0, |b| b.len());
+            let cursor = doc.display_cursor(doc.selection(view.id).primary());
+            let viewport = view.inner_area(doc);
+            hex_dump::cursor_screen_pos(
+                byte_len,
+                doc.view_offset(view.id),
+                cursor,
+                viewport.height as usize,
+                viewport.width as usize,
+            )
+        } else {
+            let text = doc.text().slice(..);
+            let cursor = doc.selection(view.id).primary().cursor(text);
+            view.screen_coords_at_pos(doc, text, cursor)
+        };
         self.set(res);
         res
     }

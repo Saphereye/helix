@@ -40,7 +40,8 @@ use helix_core::{
     indent::{auto_detect_indent_style, IndentStyle},
     line_ending::auto_detect_line_ending,
     syntax::{self, config::LanguageConfiguration},
-    ChangeSet, Diagnostic, LineEnding, Range, Rope, RopeBuilder, Selection, Syntax, Transaction,
+    ChangeSet, Diagnostic, LineEnding, Range, Rope, RopeBuilder, Selection, Syntax,
+    Transaction,
 };
 
 use crate::{
@@ -59,9 +60,69 @@ struct HexDumpSaved {
     readonly: bool,
 }
 
+#[derive(Debug, Clone)]
+struct HexRevision {
+    parent: usize,
+    last_child: Option<std::num::NonZeroUsize>,
+    bytes: Vec<u8>,
+    selection: Selection,
+}
+
+#[derive(Debug, Clone)]
+struct HexHistory {
+    revisions: Vec<HexRevision>,
+    current: usize,
+}
+
+impl HexHistory {
+    fn new(bytes: Vec<u8>, selection: Selection) -> Self {
+        Self {
+            revisions: vec![HexRevision {
+                parent: 0,
+                last_child: None,
+                bytes,
+                selection,
+            }],
+            current: 0,
+        }
+    }
+
+    fn commit(&mut self, bytes: Vec<u8>, selection: Selection) {
+        let parent = self.current;
+        let new_current = self.revisions.len();
+        self.revisions[parent].last_child = std::num::NonZeroUsize::new(new_current);
+        self.revisions.push(HexRevision {
+            parent,
+            last_child: None,
+            bytes,
+            selection,
+        });
+        self.current = new_current;
+    }
+
+    fn undo(&mut self) -> Option<(Vec<u8>, Selection)> {
+        if self.current == 0 {
+            return None;
+        }
+        self.current = self.revisions[self.current].parent;
+        let rev = &self.revisions[self.current];
+        Some((rev.bytes.clone(), rev.selection.clone()))
+    }
+
+    fn redo(&mut self) -> Option<(Vec<u8>, Selection)> {
+        let child = self.revisions[self.current].last_child?;
+        self.current = child.get();
+        let rev = &self.revisions[self.current];
+        Some((rev.bytes.clone(), rev.selection.clone()))
+    }
+}
+
 struct HexView {
     bytes: Vec<u8>,
     saved: Option<HexDumpSaved>,
+    /// Bytes before the current uncommitted edit batch.
+    pending: Option<Vec<u8>>,
+    history: HexHistory,
 }
 
 /// 8kB of buffer space for encoding and decoding `Rope`s.
@@ -855,7 +916,7 @@ impl Document {
         Ok(doc)
     }
 
-    /// Open a file as a read-only hex dump (xxd-style).
+    /// Open a binary file in the hex viewer.
     pub fn open_hex(
         path: &Path,
         config: Arc<dyn DynAccess<Config>>,
@@ -899,13 +960,16 @@ impl Document {
             readonly: self.readonly,
         };
 
-        self.text = hex_dump::bytes_to_rope(&bytes);
+        self.text = Rope::new();
         self.syntax = None;
         self.language = None;
         self.readonly = false;
+        let selection = self.selection(view);
         self.hex_view = Some(HexView {
+            history: HexHistory::new(bytes.clone(), selection.clone()),
             bytes,
             saved: Some(saved),
+            pending: None,
         });
         self.reset_hex_text_state(view);
         Ok(())
@@ -944,36 +1008,94 @@ impl Document {
         Ok(())
     }
 
-    pub fn refresh_hex_rope(&mut self, view: ViewId) {
-        let Some(hex) = self.hex_view.as_ref() else {
-            return;
-        };
-
-        let selection = self.selection(view);
-        let text = self.text();
-        let cursor = selection.primary().cursor(text.slice(..));
-        let line = text.char_to_line(cursor);
-        let col = cursor.saturating_sub(text.line_to_char(line));
-
-        let new_rope = hex_dump::bytes_to_rope(&hex.bytes);
-        let transaction = helix_core::diff::compare_ropes(&self.text, &new_rope);
-        self.apply(&transaction, view);
-
-        let line = line.min(new_rope.len_lines().saturating_sub(1));
-        let line_start = new_rope.line_to_char(line);
-        let max_col = new_rope.line(line).len_chars();
-        self.set_selection(view, Selection::point(line_start + col.min(max_col)));
-    }
-
-    pub fn set_hex_byte(&mut self, view: ViewId, byte_index: usize, value: u8) {
+    fn hex_begin_batch(&mut self) {
         let Some(hex) = self.hex_view.as_mut() else {
             return;
         };
-        if byte_index >= hex.bytes.len() {
+        if hex.pending.is_none() {
+            hex.pending = Some(hex.bytes.clone());
+        }
+    }
+
+    fn hex_append_changes_to_history(&mut self, view: &mut View) {
+        let selection = self.selection(view.id).clone();
+        let Some(hex) = self.hex_view.as_mut() else {
+            return;
+        };
+        let Some(old_bytes) = hex.pending.take() else {
+            return;
+        };
+        let new_bytes = hex.bytes.clone();
+        if old_bytes == new_bytes {
             return;
         }
-        hex.bytes[byte_index] = value;
-        self.refresh_hex_rope(view);
+        hex.history.commit(new_bytes, selection);
+    }
+
+    fn hex_undo_redo_impl(&mut self, view: &mut View, undo: bool) -> bool {
+        if undo {
+            self.hex_append_changes_to_history(view);
+        } else if self
+            .hex_view
+            .as_ref()
+            .is_some_and(|hex| hex.pending.is_some())
+        {
+            return false;
+        }
+
+        let Some(hex) = self.hex_view.as_mut() else {
+            return false;
+        };
+        let Some((bytes, selection)) = (if undo {
+            hex.history.undo()
+        } else {
+            hex.history.redo()
+        }) else {
+            return false;
+        };
+
+        if let Some(hex) = self.hex_view.as_mut() {
+            hex.bytes = bytes;
+            hex.pending = None;
+        }
+        self.set_selection(view.id, selection);
+        view.sync_changes(self);
+        true
+    }
+
+    pub fn set_hex_byte(&mut self, view: ViewId, byte_index: usize, value: u8) {
+        if !self
+            .hex_view
+            .as_ref()
+            .is_some_and(|hex| byte_index < hex.bytes.len())
+        {
+            return;
+        }
+        self.hex_begin_batch();
+        self.hex_view.as_mut().unwrap().bytes[byte_index] = value;
+        let _ = view;
+    }
+
+    pub fn append_hex_byte(&mut self, view: ViewId, value: u8) {
+        if self.hex_view.is_none() {
+            return;
+        }
+        self.hex_begin_batch();
+        self.hex_view.as_mut().unwrap().bytes.push(value);
+        let _ = view;
+    }
+
+    pub fn remove_hex_byte(&mut self, view: ViewId, index: usize) {
+        if !self
+            .hex_view
+            .as_ref()
+            .is_some_and(|hex| index < hex.bytes.len())
+        {
+            return;
+        }
+        self.hex_begin_batch();
+        self.hex_view.as_mut().unwrap().bytes.remove(index);
+        let _ = view;
     }
 
     fn from_hex_bytes(
@@ -981,13 +1103,94 @@ impl Document {
         saved: Option<HexDumpSaved>,
         config: Arc<dyn DynAccess<Config>>,
     ) -> Self {
-        let rope = hex_dump::bytes_to_rope(&bytes);
-        let mut doc = Self::from(rope, None, config);
+        let mut doc = Self::from(Rope::new(), None, config);
         doc.syntax = None;
         doc.language = None;
         doc.readonly = false;
-        doc.hex_view = Some(HexView { bytes, saved });
+        doc.hex_view = Some(HexView {
+            history: HexHistory::new(bytes.clone(), Selection::point(0)),
+            bytes,
+            saved,
+            pending: None,
+        });
         doc
+    }
+
+    /// Virtual text length while in hex mode (bytes are the source of truth).
+    pub fn display_len_chars(&self) -> usize {
+        if let Some(bytes) = self.hex_bytes() {
+            hex_dump::display_len_chars(bytes.len())
+        } else {
+            self.text().len_chars()
+        }
+    }
+
+    /// Line count in display space (hex virtual lines or rope lines).
+    pub fn display_len_lines(&self) -> usize {
+        if let Some(bytes) = self.hex_bytes() {
+            hex_dump::line_count(bytes.len())
+        } else {
+            self.text().len_lines()
+        }
+    }
+
+    /// Map a display char index to a line number.
+    pub fn display_char_to_line(&self, char_idx: usize) -> usize {
+        if let Some(bytes) = self.hex_bytes() {
+            hex_dump::char_to_line_col(
+                char_idx.min(hex_dump::display_len_chars(bytes.len()).saturating_sub(1)),
+                bytes.len(),
+            )
+            .0
+        } else {
+            let len = self.text().len_chars();
+            if len == 0 {
+                0
+            } else {
+                self.text().char_to_line(char_idx.min(len - 1))
+            }
+        }
+    }
+
+    /// Block-cursor position in display space.
+    pub fn display_cursor(&self, range: Range) -> usize {
+        if self.is_hex_dump() {
+            range
+                .head
+                .min(self.display_len_chars().saturating_sub(1))
+        } else {
+            range.cursor(self.text().slice(..))
+        }
+    }
+
+    /// Line number of the block cursor in display space.
+    pub fn display_cursor_line(&self, range: Range) -> usize {
+        self.display_char_to_line(self.display_cursor(range))
+    }
+
+    /// Map `(row, col)` screen coordinates to a display char index.
+    pub fn display_pos_at_coords(
+        &self,
+        coords: helix_core::Position,
+        limit_before_line_ending: bool,
+    ) -> usize {
+        if let Some(bytes) = self.hex_bytes() {
+            let byte_len = bytes.len();
+            let max_line = hex_dump::line_count(byte_len).saturating_sub(1);
+            let row = if limit_before_line_ending {
+                coords.row.min(max_line)
+            } else {
+                coords.row.min(max_line)
+            };
+            let col = coords.col.min(hex_dump::LINE_WIDTH - 1);
+            hex_dump::line_col_to_char(row, col, byte_len)
+        } else {
+            helix_core::pos_at_coords(
+                self.text().slice(..),
+                coords,
+                limit_before_line_ending,
+            )
+        }
     }
 
     fn reset_hex_text_state(&mut self, view: ViewId) {
@@ -1477,12 +1680,13 @@ impl Document {
 
         if self.is_hex_dump() {
             let bytes = hex_dump::read_file_bytes(&path)?;
+            let selection = self.selection(view.id).clone();
             if let Some(hex) = self.hex_view.as_mut() {
-                hex.bytes = bytes;
+                hex.bytes = bytes.clone();
+                hex.pending = None;
+                hex.history = HexHistory::new(bytes, selection);
             }
-            let rope = hex_dump::bytes_to_rope(self.hex_bytes().unwrap_or(&[]));
-            let transaction = helix_core::diff::compare_ropes(self.text(), &rope);
-            self.apply(&transaction, view.id);
+            self.changes = ChangeSet::new(self.text().slice(..));
             self.append_changes_to_history(view);
             self.reset_modified();
             self.pickup_last_saved_time();
@@ -1609,8 +1813,12 @@ impl Document {
     /// Select text within the [`Document`].
     pub fn set_selection(&mut self, view_id: ViewId, selection: Selection) {
         // TODO: use a transaction?
-        self.selections
-            .insert(view_id, selection.ensure_invariants(self.text().slice(..)));
+        let selection = if let Some(bytes) = self.hex_bytes() {
+            hex_dump::clamp_selection(selection, bytes.len())
+        } else {
+            selection.ensure_invariants(self.text().slice(..))
+        };
+        self.selections.insert(view_id, selection);
         helix_event::dispatch(SelectionDidChange {
             doc: self,
             view: view_id,
@@ -1621,7 +1829,7 @@ impl Document {
     /// a single cursor would go if it were on the first grapheme. If
     /// the text is empty, returns (0, 0).
     pub fn origin(&self) -> Range {
-        if self.text().len_chars() == 0 {
+        if self.is_hex_dump() || self.text().len_chars() == 0 {
             return Range::new(0, 0);
         }
 
@@ -1837,10 +2045,12 @@ impl Document {
 
         // if specified, the current selection should instead be replaced by transaction.selection
         if let Some(selection) = transaction.selection() {
-            self.selections.insert(
-                view_id,
-                selection.clone().ensure_invariants(self.text.slice(..)),
-            );
+            let selection = if let Some(bytes) = self.hex_bytes() {
+                hex_dump::clamp_selection(selection.clone(), bytes.len())
+            } else {
+                selection.clone().ensure_invariants(self.text.slice(..))
+            };
+            self.selections.insert(view_id, selection);
             helix_event::dispatch(SelectionDidChange {
                 doc: self,
                 view: view_id,
@@ -1877,6 +2087,9 @@ impl Document {
     }
     /// Apply a [`Transaction`] to the [`Document`] to change its text.
     pub fn apply(&mut self, transaction: &Transaction, view_id: ViewId) -> bool {
+        if self.is_hex_dump() && !transaction.changes().is_empty() {
+            return false;
+        }
         self.apply_inner(transaction, view_id, true)
     }
 
@@ -1888,6 +2101,9 @@ impl Document {
     }
 
     fn undo_redo_impl(&mut self, view: &mut View, undo: bool) -> bool {
+        if self.is_hex_dump() {
+            return self.hex_undo_redo_impl(view, undo);
+        }
         if undo {
             self.append_changes_to_history(view);
         } else if !self.changes.is_empty() {
@@ -2010,6 +2226,10 @@ impl Document {
 
     /// Commit pending changes to history
     pub fn append_changes_to_history(&mut self, view: &mut View) {
+        if self.is_hex_dump() {
+            self.hex_append_changes_to_history(view);
+            return;
+        }
         if self.changes.is_empty() {
             return;
         }
@@ -2038,6 +2258,16 @@ impl Document {
 
     /// If there are unsaved modifications.
     pub fn is_modified(&self) -> bool {
+        if let Some(hex) = &self.hex_view {
+            let current_revision = hex.history.current;
+            log::debug!(
+                "id {} modified - last saved: {}, current: {}",
+                self.id,
+                self.last_saved_revision,
+                current_revision
+            );
+            return current_revision != self.last_saved_revision || hex.pending.is_some();
+        }
         let history = self.history.take();
         let current_revision = history.current_revision();
         self.history.set(history);
@@ -2077,6 +2307,9 @@ impl Document {
 
     /// Get the current revision number
     pub fn get_current_revision(&mut self) -> usize {
+        if let Some(hex) = &self.hex_view {
+            return hex.history.current;
+        }
         let history = self.history.take();
         let current_revision = history.current_revision();
         self.history.set(history);
@@ -2942,6 +3175,109 @@ mod test {
             .text()
             .to_string(),
             helix_core::NATIVE_LINE_ENDING.as_str()
+        );
+    }
+
+    #[test]
+    fn hex_undo_syncs_bytes() {
+        let config = Arc::new(ArcSwap::new(Arc::new(Config::default())));
+        let mut doc = Document::from_hex_bytes(b"Hi".to_vec(), None, config);
+        let mut view = View::new(doc.id(), crate::editor::GutterConfig::default());
+        let view_id = view.id;
+        doc.ensure_view_init(view_id);
+        doc.set_selection(view_id, Selection::point(0));
+
+        doc.set_hex_byte(view_id, 0, b'X');
+        doc.append_changes_to_history(&mut view);
+
+        assert_eq!(doc.hex_bytes(), Some(b"Xi".as_slice()));
+
+        assert!(doc.undo(&mut view));
+        assert_eq!(doc.hex_bytes(), Some(b"Hi".as_slice()));
+
+        assert!(doc.redo(&mut view));
+        assert_eq!(doc.hex_bytes(), Some(b"Xi".as_slice()));
+    }
+
+    #[test]
+    fn hex_append_and_truncate() {
+        let config = Arc::new(ArcSwap::new(Arc::new(Config::default())));
+        let mut doc = Document::from_hex_bytes(b"Hi".to_vec(), None, config);
+        let mut view = View::new(doc.id(), crate::editor::GutterConfig::default());
+        let view_id = view.id;
+        doc.ensure_view_init(view_id);
+        doc.set_selection(view_id, Selection::point(0));
+
+        doc.append_hex_byte(view_id, b'!');
+        assert_eq!(doc.hex_bytes(), Some(b"Hi!".as_slice()));
+
+        doc.set_hex_byte(view_id, 0, b'X');
+        assert_eq!(doc.hex_bytes(), Some(b"Xi!".as_slice()));
+
+        doc.remove_hex_byte(view_id, 2);
+        assert_eq!(doc.hex_bytes(), Some(b"Xi".as_slice()));
+    }
+
+    #[test]
+    fn hex_blocks_plaintext_apply() {
+        let config = Arc::new(ArcSwap::new(Arc::new(Config::default())));
+        let mut doc = Document::from_hex_bytes(b"Hi".to_vec(), None, config);
+        let view_id = ViewId::default();
+        doc.set_selection(view_id, Selection::point(0));
+
+        let transaction = Transaction::insert(doc.text(), doc.selection(view_id), "x".into());
+        assert!(!doc.apply(&transaction, view_id));
+        assert_eq!(doc.hex_bytes(), Some(b"Hi".as_slice()));
+    }
+
+    #[test]
+    fn hex_display_helpers_on_empty_rope() {
+        let config = Arc::new(ArcSwap::new(Arc::new(Config::default())));
+        let mut doc = Document::from_hex_bytes(b"Hi".to_vec(), None, config);
+        let view = View::new(doc.id(), crate::editor::GutterConfig::default());
+        let view_id = view.id;
+        doc.ensure_view_init(view_id);
+
+        assert_eq!(doc.display_len_chars(), hex_dump::display_len_chars(2));
+        assert_eq!(doc.display_char_to_line(0), 0);
+        assert_eq!(doc.display_cursor(doc.selection(view_id).primary()), 0);
+        assert_eq!(doc.display_len_lines(), 1);
+        assert_eq!(view.estimate_last_doc_line(&doc), 0);
+    }
+
+    #[test]
+    fn hex_display_cursor_line_on_empty_rope() {
+        let config = Arc::new(ArcSwap::new(Arc::new(Config::default())));
+        let mut doc = Document::from_hex_bytes(vec![0; 32], None, config);
+        let view_id = ViewId::default();
+        doc.ensure_view_init(view_id);
+
+        // Line 1, column 0 in virtual hex layout.
+        let cursor = hex_dump::line_col_to_char(1, 0, 32);
+        doc.set_selection(view_id, Selection::point(cursor));
+
+        assert_eq!(cursor, 77);
+        assert_eq!(
+            doc.display_cursor_line(doc.selection(view_id).primary()),
+            1
+        );
+        assert_eq!(doc.text().len_chars(), 0);
+    }
+
+    #[test]
+    fn hex_open_avoids_formatted_rope() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/hx");
+        if !path.exists() {
+            return;
+        }
+        let config = Arc::new(ArcSwap::new(Arc::new(Config::default())));
+        let doc = Document::open_hex(&path, config).expect("open binary");
+        assert!(doc.is_hex_dump());
+        assert_eq!(doc.text().len_chars(), 0);
+        assert!(doc.hex_bytes().is_some_and(|b| b.len() > 1024));
+        assert_eq!(
+            doc.display_len_chars(),
+            hex_dump::display_len_chars(doc.hex_bytes().unwrap().len())
         );
     }
 

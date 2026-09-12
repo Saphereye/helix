@@ -91,6 +91,78 @@ impl EditorView {
 
         let view_offset = doc.view_offset(view.id);
 
+        if doc.is_hex_dump() {
+            let mut decorations = DecorationManager::default();
+            let gutter_overflow = view.gutter_offset(doc) == 0;
+            if !gutter_overflow {
+                Self::render_gutter(
+                    editor,
+                    doc,
+                    view,
+                    view.area,
+                    theme,
+                    is_focused & self.terminal_focused,
+                    &mut decorations,
+                );
+            }
+
+            Self::render_rulers(editor, doc, view, inner, surface, theme);
+
+            let primary_cursor = doc.display_cursor(doc.selection(view.id).primary());
+            let doc_config = doc.config.load();
+            let cursor_style = match editor.mode() {
+                Mode::Insert => theme
+                    .find_highlight_exact("ui.cursor.insert")
+                    .map(|_| theme.get("ui.cursor.insert"))
+                    .unwrap_or_else(|| theme.get("ui.cursor")),
+                Mode::Select => theme
+                    .find_highlight_exact("ui.cursor.select")
+                    .map(|_| theme.get("ui.cursor.select"))
+                    .unwrap_or_else(|| theme.get("ui.cursor")),
+                Mode::Normal => theme
+                    .find_highlight_exact("ui.cursor.normal")
+                    .map(|_| theme.get("ui.cursor.normal"))
+                    .unwrap_or_else(|| theme.get("ui.cursor")),
+            };
+            let draw_block_cursor = is_focused
+                && self.terminal_focused
+                && doc_config
+                    .cursor_shape
+                    .from_mode(editor.mode())
+                    == CursorKind::Block;
+            super::hex_render::render_hex_dump(
+                surface,
+                inner,
+                doc,
+                view_offset,
+                theme,
+                &mut decorations,
+                primary_cursor,
+                &editor.cursor_cache,
+                draw_block_cursor,
+                cursor_style,
+            );
+
+            if viewport.right() != view.area.right() {
+                let x = area.right();
+                let border_style = theme.get("ui.window");
+                for y in area.top()..area.bottom() {
+                    surface[(x, y)]
+                        .set_symbol(tui::symbols::line::VERTICAL)
+                        .set_style(border_style);
+                }
+            }
+
+            let statusline_area = view
+                .area
+                .clip_top(view.area.height.saturating_sub(1))
+                .clip_bottom(1);
+            let mut context =
+                statusline::RenderContext::new(editor, doc, view, is_focused, &self.spinners);
+            statusline::render(&mut context, statusline_area, surface);
+            return;
+        }
+
         let text_annotations = view.text_annotations(doc, Some(theme));
         let mut decorations = DecorationManager::default();
 
@@ -192,10 +264,7 @@ impl EditorView {
 
         Self::render_rulers(editor, doc, view, inner, surface, theme);
 
-        let primary_cursor = doc
-            .selection(view.id)
-            .primary()
-            .cursor(doc.text().slice(..));
+        let primary_cursor = doc.display_cursor(doc.selection(view.id).primary());
         if is_focused {
             decorations.add_decoration(text_decorations::Cursor {
                 cache: &editor.cursor_cache,
@@ -216,6 +285,23 @@ impl EditorView {
             config.end_of_line_diagnostics,
         ));
         if doc.is_hex_dump() {
+            let cursor_style = match editor.mode() {
+                Mode::Insert => theme
+                    .find_highlight_exact("ui.cursor.insert")
+                    .map(|_| theme.get("ui.cursor.insert"))
+                    .unwrap_or_else(|| theme.get("ui.cursor")),
+                Mode::Select => theme
+                    .find_highlight_exact("ui.cursor.select")
+                    .map(|_| theme.get("ui.cursor.select"))
+                    .unwrap_or_else(|| theme.get("ui.cursor")),
+                Mode::Normal => theme
+                    .find_highlight_exact("ui.cursor.normal")
+                    .map(|_| theme.get("ui.cursor.normal"))
+                    .unwrap_or_else(|| theme.get("ui.cursor")),
+            };
+            let draw_block_cursor = is_focused
+                && self.terminal_focused
+                && config.cursor_shape.from_mode(editor.mode()) == CursorKind::Block;
             super::hex_render::render_hex_dump(
                 surface,
                 inner,
@@ -223,6 +309,10 @@ impl EditorView {
                 view_offset,
                 theme,
                 &mut decorations,
+                primary_cursor,
+                &editor.cursor_cache,
+                draw_block_cursor,
+                cursor_style,
             );
         } else {
             render_document(
@@ -751,11 +841,10 @@ impl EditorView {
         is_focused: bool,
         decoration_manager: &mut DecorationManager<'d>,
     ) {
-        let text = doc.text().slice(..);
         let cursors: Rc<[_]> = doc
             .selection(view.id)
             .iter()
-            .map(|range| range.cursor_line(text))
+            .map(|range| doc.display_cursor_line(*range))
             .collect();
 
         let mut offset = 0;

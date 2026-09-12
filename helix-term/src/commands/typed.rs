@@ -2722,11 +2722,11 @@ fn diffbufs(
     Ok(())
 }
 
-fn xxd(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+fn hexviewer(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
     }
-    crate::commands::xxd::toggle(cx)
+    crate::commands::hexviewer::toggle(cx)
 }
 
 fn diffbufs_off(
@@ -4059,10 +4059,10 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         },
     },
     TypableCommand {
-        name: "xxd",
-        aliases: &[],
-        doc: "Toggle xxd-style hex dump view for the current buffer.",
-        fun: xxd,
+        name: "hexviewer",
+        aliases: &["xxd"],
+        doc: "Toggle hex viewer / editor for the current buffer.",
+        fun: hexviewer,
         completer: CommandCompleter::none(),
         signature: Signature {
             positionals: (0, Some(0)),

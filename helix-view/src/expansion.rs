@@ -250,13 +250,19 @@ fn expand_variable(editor: &Editor, variable: Variable) -> Result<Cow<'static, s
 
     match variable {
         Variable::CursorLine => {
-            let cursor_line = doc.selection(view.id).primary().cursor_line(text);
+            let cursor_line = doc.display_cursor_line(doc.selection(view.id).primary());
             Ok(Cow::Owned((cursor_line + 1).to_string()))
         }
         Variable::CursorColumn => {
-            let cursor = doc.selection(view.id).primary().cursor(text);
-            let position = helix_core::coords_at_pos(text, cursor);
-            Ok(Cow::Owned((position.col + 1).to_string()))
+            let col = if doc.is_hex_dump() {
+                let cursor = doc.display_cursor(doc.selection(view.id).primary());
+                let byte_len = doc.hex_bytes().map_or(0, |b| b.len());
+                crate::hex_dump::char_to_line_col(cursor, byte_len).1
+            } else {
+                let cursor = doc.selection(view.id).primary().cursor(text);
+                helix_core::coords_at_pos(text, cursor).col
+            };
+            Ok(Cow::Owned((col + 1).to_string()))
         }
         Variable::BufferName => {
             // Note: usually we would use `Document::display_name` but we can statically borrow
