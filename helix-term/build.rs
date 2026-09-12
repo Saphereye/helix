@@ -1,16 +1,46 @@
+use std::path::Path;
+
 use helix_loader::grammar::{build_grammars, fetch_grammars};
 
 const STRICT: bool = true;
 
 fn main() {
-    if std::env::var("HELIX_DISABLE_AUTO_GRAMMAR_BUILD").is_err() {
-        fetch_grammars(STRICT).expect("Failed to fetch tree-sitter grammars");
-        build_grammars(Some(std::env::var("TARGET").unwrap()), STRICT)
-            .expect("Failed to compile tree-sitter grammars");
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let languages_toml = manifest_dir.join("../languages.toml");
+    if languages_toml.exists() {
+        println!("cargo:rerun-if-changed={}", languages_toml.display());
     }
+
+    let grammars_built = grammar_libs_exist(manifest_dir);
+    if std::env::var("HELIX_DISABLE_AUTO_GRAMMAR_BUILD").is_ok() && grammars_built {
+        return;
+    }
+
+    let skip_fetch = std::env::var("HELIX_FORCE_GRAMMAR_FETCH").is_err()
+        && (std::env::var("HELIX_SKIP_GRAMMAR_FETCH").is_ok() || grammar_sources_exist(manifest_dir));
+
+    if !skip_fetch {
+        fetch_grammars(STRICT).expect("Failed to fetch tree-sitter grammars");
+    }
+    build_grammars(Some(std::env::var("TARGET").unwrap()), STRICT)
+        .expect("Failed to compile tree-sitter grammars");
 
     #[cfg(windows)]
     windows_rc::link_icon_in_windows_exe("../contrib/helix-256p.ico");
+}
+
+fn runtime_grammars(manifest_dir: &Path) -> std::path::PathBuf {
+    manifest_dir.join("../runtime/grammars")
+}
+
+fn grammar_sources_exist(manifest_dir: &Path) -> bool {
+    runtime_grammars(manifest_dir)
+        .join("sources/rust/src/parser.c")
+        .exists()
+}
+
+fn grammar_libs_exist(manifest_dir: &Path) -> bool {
+    runtime_grammars(manifest_dir).join("rust.so").exists()
 }
 
 #[cfg(windows)]
@@ -79,8 +109,7 @@ mod windows_rc {
                         "Can not find Windows SDK",
                     ))
                 } else {
-                    let lines = String::from_utf8(find_reg_key.stdout)
-                        .expect("Should be able to parse the output");
+                    let lines = String::from_utf8_lossy(&find_reg_key.stdout);
                     let mut lines: Vec<&str> = lines.lines().collect();
                     let mut rc_exe_paths: Vec<PathBuf> = Vec::new();
                     lines.reverse();

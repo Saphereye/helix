@@ -1,5 +1,6 @@
 mod completion;
 mod diff_highlights;
+mod hex_render;
 mod document;
 pub(crate) mod editor;
 mod info;

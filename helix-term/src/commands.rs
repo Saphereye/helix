@@ -3,6 +3,8 @@ pub(crate) mod lsp;
 pub(crate) mod syntax;
 pub(crate) mod typed;
 pub(crate) mod diffbufs;
+pub(crate) mod hex_edit;
+pub(crate) mod xxd;
 
 pub use dap::*;
 use futures_util::FutureExt;
@@ -1813,7 +1815,22 @@ fn replace(cx: &mut Context) {
 
     // need to wait for next key
     cx.on_next_key(move |cx, event| {
+        if let KeyEvent {
+            code: KeyCode::Char(ch),
+            ..
+        } = event
+        {
+            if hex_edit::replace_key(cx, ch) {
+                return;
+            }
+        }
+
         let (view, doc) = current!(cx.editor);
+        if doc.is_hex_dump() {
+            cx.editor.set_status("move cursor to hex or ASCII column");
+            return;
+        }
+
         let ch: Option<&str> = match event {
             KeyEvent {
                 code: KeyCode::Char(ch),
@@ -4351,6 +4368,10 @@ pub mod insert {
     use helix_view::editor::SmartTabConfig;
 
     pub fn insert_char(cx: &mut Context, c: char) {
+        if hex_edit::insert_char(cx, c) {
+            return;
+        }
+
         let (view, doc) = current_ref!(cx.editor);
         let text = doc.text();
         let selection = doc.selection(view.id);

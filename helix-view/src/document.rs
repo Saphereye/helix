@@ -47,9 +47,22 @@ use crate::{
     editor::Config,
     events::{DocumentDidChange, SelectionDidChange},
     expansion,
+    hex_dump,
     view::ViewPosition,
     DocumentId, Editor, Theme, View, ViewId,
 };
+
+struct HexDumpSaved {
+    text: Rope,
+    syntax: Option<Syntax>,
+    language: Option<Arc<LanguageConfiguration>>,
+    readonly: bool,
+}
+
+struct HexView {
+    bytes: Vec<u8>,
+    saved: Option<HexDumpSaved>,
+}
 
 /// 8kB of buffer space for encoding and decoding `Rope`s.
 const BUF_SIZE: usize = 8192;
@@ -209,6 +222,7 @@ pub struct Document {
     diff_handle: Option<DiffHandle>,
     diff_group: Option<DocumentId>,
     diff_compare: Option<DocumentId>,
+    hex_view: Option<HexView>,
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
 
     // when document was used for most-recent-used buffer picker
@@ -762,6 +776,7 @@ impl Document {
             diff_handle: None,
             diff_group: None,
             diff_compare: None,
+            hex_view: None,
             config,
             version_control_head: None,
             focused_at: std::time::Instant::now(),
@@ -812,6 +827,9 @@ impl Document {
 
         // Open the file if it exists, otherwise assume it is a new file (and thus empty).
         let (rope, encoding, has_bom) = if path.exists() {
+            if hex_dump::file_looks_binary(path)? {
+                return Self::open_hex(path, config);
+            }
             let mut file = std::fs::File::open(path)?;
             from_reader(&mut file, encoding)?
         } else {
@@ -835,6 +853,148 @@ impl Document {
         doc.detect_indent_and_line_ending();
 
         Ok(doc)
+    }
+
+    /// Open a file as a read-only hex dump (xxd-style).
+    pub fn open_hex(
+        path: &Path,
+        config: Arc<dyn DynAccess<Config>>,
+    ) -> Result<Self, DocumentOpenError> {
+        if path.metadata().is_ok_and(|metadata| !metadata.is_file()) {
+            return Err(DocumentOpenError::IrregularFile);
+        }
+
+        let bytes = std::fs::read(path)?;
+        let mut doc = Self::from_hex_bytes(bytes, None, config);
+        doc.set_path(Some(path));
+        Ok(doc)
+    }
+
+    pub fn is_hex_dump(&self) -> bool {
+        self.hex_view.is_some()
+    }
+
+    pub fn hex_bytes(&self) -> Option<&[u8]> {
+        self.hex_view.as_ref().map(|h| h.bytes.as_slice())
+    }
+
+    pub fn hex_bytes_mut(&mut self) -> Option<&mut Vec<u8>> {
+        self.hex_view.as_mut().map(|h| &mut h.bytes)
+    }
+
+    pub fn enter_hex_dump(&mut self, view: ViewId) -> io::Result<()> {
+        if self.is_hex_dump() {
+            return Ok(());
+        }
+
+        let bytes = match &self.path {
+            Some(path) => hex_dump::read_file_bytes(path)?,
+            None => self.text().to_string().into_bytes(),
+        };
+
+        let saved = HexDumpSaved {
+            text: self.text().clone(),
+            syntax: self.syntax.take(),
+            language: self.language.take(),
+            readonly: self.readonly,
+        };
+
+        self.text = hex_dump::bytes_to_rope(&bytes);
+        self.syntax = None;
+        self.language = None;
+        self.readonly = false;
+        self.hex_view = Some(HexView {
+            bytes,
+            saved: Some(saved),
+        });
+        self.reset_hex_text_state(view);
+        Ok(())
+    }
+
+    pub fn exit_hex_dump(
+        &mut self,
+        view: ViewId,
+        loader: &syntax::Loader,
+    ) -> Result<(), DocumentOpenError> {
+        let Some(hex) = self.hex_view.take() else {
+            return Ok(());
+        };
+
+        if let Some(saved) = hex.saved {
+            self.text = saved.text;
+            self.syntax = saved.syntax;
+            self.language = saved.language;
+            self.readonly = saved.readonly;
+            self.reset_hex_text_state(view);
+            return Ok(());
+        }
+
+        let path = self
+            .path()
+            .ok_or(DocumentOpenError::IrregularFile)?
+            .to_owned();
+        let encoding = self.encoding;
+        let mut file = std::fs::File::open(&path)?;
+        let (rope, ..) = from_reader(&mut file, Some(encoding))?;
+        self.text = rope;
+        self.readonly = false;
+        self.reset_hex_text_state(view);
+        self.detect_language(loader);
+        self.detect_indent_and_line_ending();
+        Ok(())
+    }
+
+    pub fn refresh_hex_rope(&mut self, view: ViewId) {
+        let Some(hex) = self.hex_view.as_ref() else {
+            return;
+        };
+
+        let selection = self.selection(view);
+        let text = self.text();
+        let cursor = selection.primary().cursor(text.slice(..));
+        let line = text.char_to_line(cursor);
+        let col = cursor.saturating_sub(text.line_to_char(line));
+
+        let new_rope = hex_dump::bytes_to_rope(&hex.bytes);
+        let transaction = helix_core::diff::compare_ropes(&self.text, &new_rope);
+        self.apply(&transaction, view);
+
+        let line = line.min(new_rope.len_lines().saturating_sub(1));
+        let line_start = new_rope.line_to_char(line);
+        let max_col = new_rope.line(line).len_chars();
+        self.set_selection(view, Selection::point(line_start + col.min(max_col)));
+    }
+
+    pub fn set_hex_byte(&mut self, view: ViewId, byte_index: usize, value: u8) {
+        let Some(hex) = self.hex_view.as_mut() else {
+            return;
+        };
+        if byte_index >= hex.bytes.len() {
+            return;
+        }
+        hex.bytes[byte_index] = value;
+        self.refresh_hex_rope(view);
+    }
+
+    fn from_hex_bytes(
+        bytes: Vec<u8>,
+        saved: Option<HexDumpSaved>,
+        config: Arc<dyn DynAccess<Config>>,
+    ) -> Self {
+        let rope = hex_dump::bytes_to_rope(&bytes);
+        let mut doc = Self::from(rope, None, config);
+        doc.syntax = None;
+        doc.language = None;
+        doc.readonly = false;
+        doc.hex_view = Some(HexView { bytes, saved });
+        doc
+    }
+
+    fn reset_hex_text_state(&mut self, view: ViewId) {
+        self.syntax_text_snapshot = self.text.clone();
+        self.syntax_pending = ChangeSet::new(self.text.slice(..));
+        self.changes = ChangeSet::new(self.text.slice(..));
+        self.set_selection(view, Selection::point(0));
     }
 
     /// The same as [`format`], but only returns formatting changes if auto-formatting
@@ -1010,6 +1170,7 @@ impl Document {
 
         // we clone and move text + path into the future so that we asynchronously save the current
         // state without blocking any further edits.
+        let hex_bytes = self.hex_view.as_ref().map(|h| h.bytes.clone());
         let text = self.text().clone();
 
         let path = match path {
@@ -1118,7 +1279,11 @@ impl Document {
 
             let write_result: anyhow::Result<_> = async {
                 let mut dst = tokio::fs::File::create(&write_path).await?;
-                to_writer(&mut dst, encoding_with_bom_info, &text).await?;
+                if let Some(bytes) = hex_bytes {
+                    tokio::io::AsyncWriteExt::write_all(&mut dst, &bytes).await?;
+                } else {
+                    to_writer(&mut dst, encoding_with_bom_info, &text).await?;
+                }
                 // Ignore ENOTSUP/EOPNOTSUPP (Operation not supported) errors from sync_all()
                 // This is known to occur on SMB filesystems on macOS where fsync is not supported
                 match dst.sync_all().await {
@@ -1309,6 +1474,20 @@ impl Document {
 
         // Once we have a valid path we check if its readonly status has changed
         self.detect_readonly();
+
+        if self.is_hex_dump() {
+            let bytes = hex_dump::read_file_bytes(&path)?;
+            if let Some(hex) = self.hex_view.as_mut() {
+                hex.bytes = bytes;
+            }
+            let rope = hex_dump::bytes_to_rope(self.hex_bytes().unwrap_or(&[]));
+            let transaction = helix_core::diff::compare_ropes(self.text(), &rope);
+            self.apply(&transaction, view.id);
+            self.append_changes_to_history(view);
+            self.reset_modified();
+            self.pickup_last_saved_time();
+            return Ok(());
+        }
 
         let mut file = std::fs::File::open(&path)?;
         let (rope, ..) = from_reader(&mut file, Some(encoding))?;
@@ -2438,10 +2617,14 @@ impl Document {
             .language
             .as_ref()
             .and_then(|config| config.soft_wrap.as_ref());
-        let enable_soft_wrap = language_soft_wrap
-            .and_then(|soft_wrap| soft_wrap.enable)
-            .or(editor_soft_wrap.enable)
-            .unwrap_or(false);
+        let enable_soft_wrap = if self.is_hex_dump() {
+            false
+        } else {
+            language_soft_wrap
+                .and_then(|soft_wrap| soft_wrap.enable)
+                .or(editor_soft_wrap.enable)
+                .unwrap_or(false)
+        };
         let max_wrap = language_soft_wrap
             .and_then(|soft_wrap| soft_wrap.max_wrap)
             .or(config.soft_wrap.max_wrap)

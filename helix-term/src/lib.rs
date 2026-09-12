@@ -57,21 +57,7 @@ fn true_color() -> bool {
 /// otherwise a NUL byte in the first kilobyte — or a known binary magic number —
 /// means binary.
 pub(crate) fn is_binary(buffer: &[u8]) -> bool {
-    // UTF-32 BOMs must be checked before UTF-16 (their BOMs overlap).
-    const BYTE_ORDER_MARKS: &[&[u8]] = &[
-        &[0xEF, 0xBB, 0xBF],       // UTF-8
-        &[0x00, 0x00, 0xFE, 0xFF], // UTF-32BE
-        &[0xFF, 0xFE, 0x00, 0x00], // UTF-32LE
-        &[0xFE, 0xFF],             // UTF-16BE
-        &[0xFF, 0xFE],             // UTF-16LE
-    ];
-
-    if BYTE_ORDER_MARKS.iter().any(|bom| buffer.starts_with(bom)) {
-        return false;
-    }
-
-    let scan = &buffer[..buffer.len().min(1024)];
-    scan.contains(&0) || buffer.starts_with(b"%PDF") || buffer.starts_with(b"\x89PNG")
+    helix_view::hex_dump::is_binary(buffer)
 }
 
 /// Function used for filtering dir entries in the various file pickers.

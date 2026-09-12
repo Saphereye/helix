@@ -1832,6 +1832,9 @@ impl Editor {
         let Some(doc_url) = doc.url() else {
             return;
         };
+        if doc.is_hex_dump() {
+            return;
+        }
         let (lang, path) = (doc.language.clone(), doc.path());
         let config = doc.config.load();
         let root_dirs = &config.workspace_lsp_roots;

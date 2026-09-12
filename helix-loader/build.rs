@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::process::Command;
 
 const MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
@@ -18,11 +17,15 @@ fn main() {
     );
     println!("cargo:rustc-env=VERSION_AND_GIT_HASH={version}");
 
-    register_git_rerun_if_changed();
+    // Rerun for version bumps only — not on every git commit.
+    println!("cargo:rerun-if-changed=../Cargo.toml");
 }
 
 /// Torch-style: `25.07.1-20260906-d47f0771` — calver, commit date, short hash.
 fn fork_version_from_git() -> Option<String> {
+    if option_env!("HELIX_STATIC_VERSION").is_some() {
+        return Some(calver());
+    }
     let ver = calver();
     let date = git_output(&["log", "-1", "--format=%cs", "HEAD"])?.replace('-', "");
     let hash = git_output(&["rev-parse", "--short=8", "HEAD"])?;
@@ -49,32 +52,3 @@ fn git_output(args: &[&str]) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn register_git_rerun_if_changed() {
-    let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
-    if cargo_toml.exists() {
-        println!("cargo:rerun-if-changed={}", cargo_toml.display());
-    }
-
-    if git_output(&["rev-parse", "HEAD"]).is_none()
-        && option_env!("HELIX_NIX_BUILD_REV").is_none()
-    {
-        return;
-    }
-
-    let Some(git_dir) = git_output(&["rev-parse", "--git-dir"]) else {
-        return;
-    };
-
-    let head = Path::new(&git_dir).join("HEAD");
-    if head.exists() {
-        println!("cargo:rerun-if-changed={}", head.display());
-    }
-
-    let Some(head_ref) = git_output(&["symbolic-ref", "HEAD"]) else {
-        return;
-    };
-    let head_ref = Path::new(&git_dir).join(head_ref);
-    if head_ref.exists() {
-        println!("cargo:rerun-if-changed={}", head_ref.display());
-    }
-}

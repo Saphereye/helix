@@ -2722,6 +2722,13 @@ fn diffbufs(
     Ok(())
 }
 
+fn xxd(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    crate::commands::xxd::toggle(cx)
+}
+
 fn diffbufs_off(
     cx: &mut compositor::Context,
     _args: Args,
@@ -4045,6 +4052,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &["diffoff"],
         doc: "Stop buffer diff for the current buffer and restore git diff if available.",
         fun: diffbufs_off,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "xxd",
+        aliases: &[],
+        doc: "Toggle xxd-style hex dump view for the current buffer.",
+        fun: xxd,
         completer: CommandCompleter::none(),
         signature: Signature {
             positionals: (0, Some(0)),

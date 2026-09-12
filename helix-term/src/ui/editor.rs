@@ -215,17 +215,28 @@ impl EditorView {
             inline_diagnostic_config,
             config.end_of_line_diagnostics,
         ));
-        render_document(
-            surface,
-            inner,
-            doc,
-            view_offset,
-            &text_annotations,
-            syntax_highlighter,
-            overlays,
-            theme,
-            decorations,
-        );
+        if doc.is_hex_dump() {
+            super::hex_render::render_hex_dump(
+                surface,
+                inner,
+                doc,
+                view_offset,
+                theme,
+                &mut decorations,
+            );
+        } else {
+            render_document(
+                surface,
+                inner,
+                doc,
+                view_offset,
+                &text_annotations,
+                syntax_highlighter,
+                overlays,
+                theme,
+                decorations,
+            );
+        }
 
         // if we're not at the edge of the screen, draw a right border
         if viewport.right() != view.area.right() {
