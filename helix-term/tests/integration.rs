@@ -17,6 +17,7 @@ mod test {
 
     mod auto_pairs;
     mod breadcrumbs;
+    mod local_search;
     mod command_line;
     mod commands;
     mod movement;

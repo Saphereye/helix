@@ -6,6 +6,7 @@ pub(crate) mod diffbufs;
 pub(crate) mod hex_edit;
 pub(crate) mod hexviewer;
 
+pub use crate::features::local_search::local_search;
 pub use dap::*;
 use futures_util::FutureExt;
 use helix_event::status;
@@ -730,20 +731,18 @@ fn no_op(_cx: &mut Context) {}
 type MoveFn =
     fn(RopeSlice, Range, Direction, usize, Movement, &TextFormat, &mut TextAnnotations) -> Range;
 
-fn move_impl(cx: &mut Context, move_fn: MoveFn, dir: Direction, behaviour: Movement) {
+fn move_impl(
+    cx: &mut Context,
+    move_fn: MoveFn,
+    dir: Direction,
+    behaviour: Movement,
+    vertical: bool,
+) {
     let count = cx.count();
-    let (view, doc) = current!(cx.editor);
-
-    if doc.is_hex_dump() {
-        let byte_len = doc.hex_bytes().map_or(0, |b| b.len());
-        let vertical = move_fn as usize == move_vertically as usize
-            || move_fn as usize == move_vertically_visual as usize;
-        let selection = doc.selection(view.id).clone().transform(|range| {
-            hex_dump::move_range(range, dir, count, behaviour, byte_len, vertical)
-        });
-        doc.set_selection(view.id, selection);
+    if hex_edit::intercept_move(cx, vertical, dir, count, behaviour) {
         return;
     }
+    let (view, doc) = current!(cx.editor);
 
     let text = doc.text().slice(..);
     let text_fmt = doc.text_format(view.inner_area(doc).width, None);
@@ -767,19 +766,43 @@ fn move_impl(cx: &mut Context, move_fn: MoveFn, dir: Direction, behaviour: Movem
 use helix_core::movement::{move_horizontally, move_vertically};
 
 fn move_char_left(cx: &mut Context) {
-    move_impl(cx, move_horizontally, Direction::Backward, Movement::Move)
+    move_impl(
+        cx,
+        move_horizontally,
+        Direction::Backward,
+        Movement::Move,
+        false,
+    )
 }
 
 fn move_char_right(cx: &mut Context) {
-    move_impl(cx, move_horizontally, Direction::Forward, Movement::Move)
+    move_impl(
+        cx,
+        move_horizontally,
+        Direction::Forward,
+        Movement::Move,
+        false,
+    )
 }
 
 fn move_line_up(cx: &mut Context) {
-    move_impl(cx, move_vertically, Direction::Backward, Movement::Move)
+    move_impl(
+        cx,
+        move_vertically,
+        Direction::Backward,
+        Movement::Move,
+        true,
+    )
 }
 
 fn move_line_down(cx: &mut Context) {
-    move_impl(cx, move_vertically, Direction::Forward, Movement::Move)
+    move_impl(
+        cx,
+        move_vertically,
+        Direction::Forward,
+        Movement::Move,
+        true,
+    )
 }
 
 fn move_visual_line_up(cx: &mut Context) {
@@ -788,6 +811,7 @@ fn move_visual_line_up(cx: &mut Context) {
         move_vertically_visual,
         Direction::Backward,
         Movement::Move,
+        true,
     )
 }
 
@@ -797,23 +821,48 @@ fn move_visual_line_down(cx: &mut Context) {
         move_vertically_visual,
         Direction::Forward,
         Movement::Move,
+        true,
     )
 }
 
 fn extend_char_left(cx: &mut Context) {
-    move_impl(cx, move_horizontally, Direction::Backward, Movement::Extend)
+    move_impl(
+        cx,
+        move_horizontally,
+        Direction::Backward,
+        Movement::Extend,
+        false,
+    )
 }
 
 fn extend_char_right(cx: &mut Context) {
-    move_impl(cx, move_horizontally, Direction::Forward, Movement::Extend)
+    move_impl(
+        cx,
+        move_horizontally,
+        Direction::Forward,
+        Movement::Extend,
+        false,
+    )
 }
 
 fn extend_line_up(cx: &mut Context) {
-    move_impl(cx, move_vertically, Direction::Backward, Movement::Extend)
+    move_impl(
+        cx,
+        move_vertically,
+        Direction::Backward,
+        Movement::Extend,
+        true,
+    )
 }
 
 fn extend_line_down(cx: &mut Context) {
-    move_impl(cx, move_vertically, Direction::Forward, Movement::Extend)
+    move_impl(
+        cx,
+        move_vertically,
+        Direction::Forward,
+        Movement::Extend,
+        true,
+    )
 }
 
 fn extend_visual_line_up(cx: &mut Context) {
@@ -822,6 +871,7 @@ fn extend_visual_line_up(cx: &mut Context) {
         move_vertically_visual,
         Direction::Backward,
         Movement::Extend,
+        true,
     )
 }
 
@@ -831,6 +881,7 @@ fn extend_visual_line_down(cx: &mut Context) {
         move_vertically_visual,
         Direction::Forward,
         Movement::Extend,
+        true,
     )
 }
 
@@ -2845,88 +2896,6 @@ fn global_search(cx: &mut Context) {
     )
     .with_history_register(Some(reg))
     .with_dynamic_query(get_files, Some(275));
-
-    cx.push_layer(Box::new(overlaid(picker)));
-}
-
-fn local_search(cx: &mut Context) {
-    #[derive(Debug)]
-    struct LineResult {
-        line_num: usize,
-        content: String,
-    }
-
-    struct LocalSearchConfig {
-        number_style: Style,
-    }
-
-    let doc = doc!(cx.editor);
-    if doc.path().is_none() {
-        cx.editor.set_error("Buffer has no associated file path");
-        return;
-    }
-    let doc_id = doc.id();
-
-    let lines: Vec<LineResult> = doc
-        .text()
-        .lines()
-        .enumerate()
-        .filter_map(|(line_num, line)| {
-            let content = line.to_string();
-            (!content.trim().is_empty()).then_some(LineResult { line_num, content })
-        })
-        .collect();
-
-    let config = LocalSearchConfig {
-        number_style: cx.editor.theme.get("constant.numeric.integer"),
-    };
-
-    let columns = [
-        PickerColumn::new("line", |item: &LineResult, config: &LocalSearchConfig| {
-            let line_num = (item.line_num + 1).to_string();
-            let padding = " ".repeat(8_usize.saturating_sub(line_num.len()));
-            Cell::from(Spans::from(vec![
-                Span::styled(line_num, config.number_style),
-                Span::raw(padding),
-            ]))
-        })
-        .without_filtering(),
-        PickerColumn::new("", |item: &LineResult, _| {
-            Cell::from(Spans::from(vec![Span::raw(&item.content)]))
-        }),
-    ];
-
-    let reg = cx.register.unwrap_or('/');
-    cx.editor.registers.last_search_register = reg;
-
-    let picker = Picker::new(
-        columns,
-        1,
-        lines,
-        config,
-        move |cx, LineResult { line_num, .. }, action| {
-            let view = view_mut!(cx.editor);
-            let doc = doc_mut!(cx.editor, &doc_id);
-            let text = doc.text();
-            if *line_num >= text.len_lines() {
-                cx.editor.set_error(
-                    "The line you jumped to does not exist anymore because the file has changed.",
-                );
-                return;
-            }
-            let start = text.line_to_char(*line_num);
-            let end = text.line_to_char((*line_num + 1).min(text.len_lines()));
-
-            doc.set_selection(view.id, Selection::single(start, end));
-            if action.align_view(view, doc.id()) {
-                align_view(doc, view, Align::Center);
-            }
-        },
-    )
-    .with_preview(move |_editor, LineResult { line_num, .. }| {
-        Some((doc_id.into(), Some((*line_num, *line_num))))
-    })
-    .with_history_register(Some(reg));
 
     cx.push_layer(Box::new(overlaid(picker)));
 }

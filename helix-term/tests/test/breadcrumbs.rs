@@ -20,6 +20,7 @@ fn outer() {
     )?;
 
     let mut config = Config::default();
+    config.editor.lsp.enable = false;
     config.editor.breadcrumb.enable = true;
     config.editor.breadcrumb.path = BreadcrumbPathOptions::None;
 
@@ -56,19 +57,14 @@ fn outer() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn breadcrumb_enabled_by_default() -> anyhow::Result<()> {
-    let file = tempfile::NamedTempFile::with_suffix(".rs")?;
-    fs::write(file.path(), "fn main() {}\n")?;
-
-    let mut app = helpers::AppBuilder::new()
-        .with_file(file.path(), None)
-        .build()?;
+async fn breadcrumb_disabled_by_default() -> anyhow::Result<()> {
+    let mut app = helpers::AppBuilder::new().build()?;
 
     let assertion = |app: &Application| {
         let doc = doc!(app.editor);
         assert!(
-            doc.config.load().breadcrumb.enable,
-            "breadcrumbs should be enabled by default"
+            !doc.config.load().breadcrumb.enable,
+            "breadcrumbs should be disabled by default"
         );
     };
 

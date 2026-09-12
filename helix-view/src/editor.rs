@@ -707,7 +707,7 @@ pub struct BreadcrumbConfig {
 impl Default for BreadcrumbConfig {
     fn default() -> Self {
         Self {
-            enable: true,
+            enable: false,
             path: BreadcrumbPathOptions::Full,
             max_depth: 8,
             max_name_length: 32,

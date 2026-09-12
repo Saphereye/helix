@@ -5,6 +5,7 @@ pub mod application;
 pub mod args;
 pub mod commands;
 pub mod compositor;
+pub mod features;
 pub mod config;
 pub mod events;
 pub mod health;

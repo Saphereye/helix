@@ -1,7 +1,28 @@
-use helix_core::Selection;
+use helix_core::{movement::Movement, Selection};
 use helix_view::{current, current_ref, doc_mut, hex_dump, hex_dump::HexField, DocumentId, ViewId};
+use helix_core::movement::Direction;
 
 use crate::commands::Context;
+
+/// Handle cursor movement in hex mode. Returns `true` when the move was handled.
+pub fn intercept_move(
+    cx: &mut Context,
+    vertical: bool,
+    dir: Direction,
+    count: usize,
+    behaviour: Movement,
+) -> bool {
+    let (view, doc) = current!(cx.editor);
+    if !doc.is_hex_dump() {
+        return false;
+    }
+    let byte_len = doc.hex_bytes().map_or(0, |b| b.len());
+    let selection = doc.selection(view.id).clone().transform(|range| {
+        hex_dump::move_range(range, dir, count, behaviour, byte_len, vertical)
+    });
+    doc.set_selection(view.id, selection);
+    true
+}
 
 pub const HEX_EDIT_ONLY_MSG: &str = "hex edit: use i/r in hex or ASCII columns";
 
@@ -172,8 +193,10 @@ fn delete_byte(cx: &mut Context, forward: bool) -> bool {
 
 fn set_cursor_on_line(cx: &mut Context, line: usize, col: usize) {
     let (view, doc) = current!(cx.editor);
+    let scrolloff = doc.config.load().scrolloff as usize;
     let byte_len = doc.hex_bytes().map_or(0, |b| b.len());
     let char_idx = hex_dump::line_col_to_char(line, col, byte_len);
     doc.set_selection(view.id, Selection::point(char_idx));
+    view.ensure_cursor_in_view(doc, scrolloff);
     helix_event::request_redraw();
 }

@@ -106,10 +106,45 @@ pub fn parse_hexyl_color(value: &str) -> Option<Color> {
     })
 }
 
-pub fn hexyl_env_style(env_name: &str) -> Option<Style> {
-    std::env::var(env_name)
+struct HexylEnvStyles {
+    offset: Option<Style>,
+    null: Option<Style>,
+    ascii_printable: Option<Style>,
+    ascii_whitespace: Option<Style>,
+    ascii_other: Option<Style>,
+    nonascii: Option<Style>,
+}
+
+fn read_hexyl_env(name: &str) -> Option<Style> {
+    std::env::var(name)
         .ok()
         .and_then(|value| parse_hexyl_color(&value).map(|color| Style::default().fg(color)))
+}
+
+static HEXYL_ENV: std::sync::OnceLock<HexylEnvStyles> = std::sync::OnceLock::new();
+
+fn hexyl_env_styles() -> &'static HexylEnvStyles {
+    HEXYL_ENV.get_or_init(|| HexylEnvStyles {
+        offset: read_hexyl_env("HEXYL_COLOR_OFFSET"),
+        null: read_hexyl_env("HEXYL_COLOR_NULL"),
+        ascii_printable: read_hexyl_env("HEXYL_COLOR_ASCII_PRINTABLE"),
+        ascii_whitespace: read_hexyl_env("HEXYL_COLOR_ASCII_WHITESPACE"),
+        ascii_other: read_hexyl_env("HEXYL_COLOR_ASCII_OTHER"),
+        nonascii: read_hexyl_env("HEXYL_COLOR_NONASCII"),
+    })
+}
+
+pub fn hexyl_env_style(env_name: &str) -> Option<Style> {
+    let styles = hexyl_env_styles();
+    match env_name {
+        "HEXYL_COLOR_OFFSET" => styles.offset,
+        "HEXYL_COLOR_NULL" => styles.null,
+        "HEXYL_COLOR_ASCII_PRINTABLE" => styles.ascii_printable,
+        "HEXYL_COLOR_ASCII_WHITESPACE" => styles.ascii_whitespace,
+        "HEXYL_COLOR_ASCII_OTHER" => styles.ascii_other,
+        "HEXYL_COLOR_NONASCII" => styles.nonascii,
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

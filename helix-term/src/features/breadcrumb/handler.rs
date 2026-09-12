@@ -22,7 +22,7 @@ use crate::{events::OnModeSwitch, job};
 const DOCUMENT_CHANGE_DEBOUNCE: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
-pub(super) struct DocumentSymbolsHandler {
+pub struct DocumentSymbolsHandler {
     docs: Vec<DocumentId>,
 }
 
@@ -53,11 +53,6 @@ impl helix_event::AsyncHook for DocumentSymbolsHandler {
 /// tags (or a flat LSP response, which is nested locally).
 fn update_document_symbols(editor: &mut Editor, doc_id: DocumentId) {
     if !editor.config().breadcrumb.enable {
-        return;
-    }
-
-    // Avoid extra latency while typing; leaving insert mode re-requests.
-    if editor.mode() == Mode::Insert {
         return;
     }
 
@@ -186,10 +181,9 @@ fn compute_tree_sitter_symbols(editor: &mut Editor, doc_id: DocumentId) {
 
             let name = text_slice.slice(name_start..name_end).to_string();
 
-            // lsp positions use utf-8 columns here; the cache stores the matching
-            // offset encoding so cursor comparisons stay consistent.
-            let (start_line, start_character) = char_pos(&text, def_start);
-            let (end_line, end_character) = char_pos(&text, def_end);
+            // LSP Utf8 encoding uses byte offsets within each line.
+            let (start_line, start_character) = utf8_byte_pos(&text, def_start);
+            let (end_line, end_character) = utf8_byte_pos(&text, def_end);
 
             flat.push(ThinDocumentSymbol {
                 name: name.into(),
@@ -217,10 +211,29 @@ fn compute_tree_sitter_symbols(editor: &mut Editor, doc_id: DocumentId) {
     update_breadcrumbs_for_all_views(editor, doc_id);
 }
 
-/// Convert a char index into `(line, character)` with utf-8 columns.
-fn char_pos(text: &helix_core::Rope, char_idx: usize) -> (usize, usize) {
+/// Convert a char index into `(line, byte column)` for LSP `OffsetEncoding::Utf8`.
+fn utf8_byte_pos(text: &helix_core::Rope, char_idx: usize) -> (usize, usize) {
     let line = text.char_to_line(char_idx);
-    (line, char_idx - text.line_to_char(line))
+    let line_start = text.line_to_byte(line);
+    let byte = text.char_to_byte(char_idx);
+    (line, byte - line_start)
+}
+
+#[cfg(test)]
+mod tests {
+    use helix_core::Rope;
+
+    use super::utf8_byte_pos;
+
+    #[test]
+    fn utf8_byte_pos_uses_byte_columns() {
+        // `fn 日本()` — cursor on 日 is byte 4 within line 0, not char 2.
+        let text = Rope::from("fn 日本() {\n}\n");
+        let cursor = text.line_to_char(0) + "fn ".chars().count();
+        let (line, col) = utf8_byte_pos(&text, cursor);
+        assert_eq!(line, 0);
+        assert_eq!(col, 3);
+    }
 }
 
 /// Map a tree-sitter `tags.scm` definition kind to an LSP symbol kind so the
@@ -255,7 +268,7 @@ fn update_breadcrumbs_for_all_views(editor: &mut Editor, doc_id: DocumentId) {
     }
 }
 
-pub(super) fn register_hooks(handlers: &Handlers) {
+pub fn register_hooks(handlers: &Handlers) {
     register_hook!(move |event: &mut DocumentDidOpen<'_>| {
         // Only gather symbols here. The breadcrumb trail itself is computed
         // when a view attaches to the document (`ensure_view_init`), since the

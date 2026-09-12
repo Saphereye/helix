@@ -1,6 +1,8 @@
+mod breadcrumb;
 mod completion;
 mod diff_highlights;
 mod hex_render;
+pub(crate) mod symbol;
 mod document;
 pub(crate) mod editor;
 mod info;

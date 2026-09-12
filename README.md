@@ -37,5 +37,9 @@ https://github.com/user-attachments/assets/e5c83247-cf1d-4306-a4be-5c379490904f
 Mostly for my personal dev setup. Skips redundant grammar fetches when sources already exist.
 
 ## Features yoinked from others
-- [feat: add breadcrumb navigation bar - #15573](https://github.com/helix-editor/helix/pull/15573). Enabled by default; set `[editor.breadcrumb] enable = false` to disable.
+- [feat: add breadcrumb navigation bar - #15573](https://github.com/helix-editor/helix/pull/15573). Set `[editor.breadcrumb] enable = true` to enable.
 - [feat: Add local search in buffer - #13053](https://github.com/helix-editor/helix/pull/13053). Fuzzy line search on `space+l` (use `/` for regex). Scoped to the current buffer only.
+
+## Fork layout
+
+Fork-only code lives in `helix-term/src/features/` (commands + hooks). Core glue: `helix-view/src/document.rs`, `helix-term/src/ui/editor.rs`, and one-line re-exports in `commands.rs`. Rebase onto upstream periodically; drop yoinked features when their PRs merge.

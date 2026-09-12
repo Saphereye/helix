@@ -1122,10 +1122,8 @@ impl Document {
             return Ok(());
         }
 
-        let bytes = match &self.path {
-            Some(path) => hex_dump::read_file_bytes(path)?,
-            None => self.text().to_string().into_bytes(),
-        };
+        // Always use in-buffer bytes so unsaved edits are preserved.
+        let bytes = self.text().to_string().into_bytes();
 
         let saved = HexDumpSaved {
             text: self.text().clone(),

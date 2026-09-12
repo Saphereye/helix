@@ -1,5 +1,5 @@
 pkgname=helix-fork
-pkgver=25.07.1.20260912.4862018f
+pkgver=25.07.1.20260912.114874c7
 pkgrel=1
 pkgdesc="Personal Helix fork"
 arch=('x86_64')
