@@ -8,57 +8,31 @@
 </picture>
 </h1>
 
-[![Build status](https://github.com/helix-editor/helix/actions/workflows/build.yml/badge.svg)](https://github.com/helix-editor/helix/actions)
-[![GitHub Release](https://img.shields.io/github/v/release/helix-editor/helix)](https://github.com/helix-editor/helix/releases/latest)
-[![Documentation](https://shields.io/badge/-documentation-452859)](https://docs.helix-editor.com/)
-[![GitHub contributors](https://img.shields.io/github/contributors/helix-editor/helix)](https://github.com/helix-editor/helix/graphs/contributors)
-[![Matrix Space](https://img.shields.io/matrix/helix-community:matrix.org)](https://matrix.to/#/#helix-community:matrix.org)
-
 </div>
 
-![Screenshot](./screenshot.png)
+A personalized fork of [Helix](https://github.com/helix-editor/helix).
 
-A [Kakoune](https://github.com/mawww/kakoune) / [Neovim](https://github.com/neovim/neovim) inspired editor, written in Rust.
+## Extra features added by me in this fork
 
-The editing model is very heavily based on Kakoune; during development I found
-myself agreeing with most of Kakoune's design decisions.
+### hexviewer
+A hex viewer/editor for binary files. Binaries auto open in this sub editor. It contains [hexyl](https://github.com/sharkdp/hexyl)-style coloring and currently allows in place byte editing with the viewer updating in realtime.
 
-For more information, see the [website](https://helix-editor.com) or
-[documentation](https://docs.helix-editor.com/).
+<img height="600" alt="image" src="https://github.com/user-attachments/assets/53e0de77-277a-4f2d-b183-3e7919feacf5" />
 
-All shortcuts/keymaps can be found [in the documentation on the website](https://docs.helix-editor.com/keymap.html).
+### diffbufs
+Allows a vimdiff-style diff between open buffers (Run `:diffbufs-off` to unlink and `:diffbufs` to link). The changes also allows syncing of scrolls diffbufs and the text snaps based on the content under the cursor.
+For example below the line numbers are different but the program auto snaps based on the content.
 
-[Troubleshooting](https://github.com/helix-editor/helix/wiki/Troubleshooting)
+<img height="600" alt="image" src="https://github.com/user-attachments/assets/f03df18a-f77b-4505-a943-972968597397" />
 
-# Features
 
-- Vim-like modal editing
-- Multiple selections
-- Built-in language server support
-- Smart, incremental syntax highlighting and code editing via tree-sitter
+### Auto file watching
+Reload buffers when the file changes on disk (with `auto-reload` as a boolean option in config). The logic is getting the file stamp every 250ms and if changes trigger a `:reload`.
 
-Although it's primarily a terminal-based editor, I am interested in exploring
-a custom renderer (similar to Emacs) using wgpu.
+### Faster writes in huge files
+Delays re-highlighting while typing to allow instant typing with tradeoff of making the text un-highlighted for a max 300ms windows.
 
-Note: Only certain languages have indentation definitions at the moment. Check
-`runtime/queries/<lang>/` for `indents.scm`.
+https://github.com/user-attachments/assets/e5c83247-cf1d-4306-a4be-5c379490904f
 
-# Installation
-
-[Installation documentation](https://docs.helix-editor.com/install.html).
-
-[![Packaging status](https://repology.org/badge/vertical-allrepos/helix-editor.svg?exclude_unsupported=1)](https://repology.org/project/helix-editor/versions)
-
-# Contributing
-
-Contributing guidelines can be found [here](./docs/CONTRIBUTING.md).
-
-# Getting help
-
-Your question might already be answered on the [FAQ](https://github.com/helix-editor/helix/wiki/FAQ).
-
-Discuss the project on the community [Matrix Space](https://matrix.to/#/#helix-community:matrix.org) (make sure to join `#helix-editor:matrix.org` if you're on a client that doesn't support Matrix Spaces yet).
-
-# Credits
-
-Thanks to [@jakenvac](https://github.com/jakenvac) for designing the logo!
+### Faster dev builds
+Mostly for my personal dev setup. Skips redundant grammar fetches when sources already exist.
